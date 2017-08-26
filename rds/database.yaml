@@ -184,7 +184,7 @@ Resources:
       Engine: !Ref DatabaseEngine
       EngineVersion: !If [isSpecificVersion, !Ref DatabaseEngineVersion, !Ref "AWS::NoValue"]
       StorageType: !Ref DatabaseStorageType
-      MultiAZ: !Ref isMultiAZ
+      MultiAZ: !If [isMultiAZ, yes, no]
       MasterUsername: !If [isRestore, !Ref "AWS::NoValue", !Ref DatabaseUser]
       MasterUserPassword: !If [isRestore, !Ref "AWS::NoValue", !Ref DatabasePass]
       DBSnapshotIdentifier: !If [isRestore, !Ref DatabaseSnapshot, !Ref "AWS::NoValue"]
