@@ -155,7 +155,9 @@ Resources:
         - - Field: host-header
             Values:
             - !Ref LoadBalancerHostPattern
-        - [] # neither LoadBalancerHostPattern nor LoadBalancerPath specified
+        - - Field: path-pattern
+            Values: 
+              - '*'
       ListenerArn:
         'Fn::ImportValue': !Sub '${ParentClusterStack}-HttpListener'
       Priority: !Ref LoadBalancerPriority
@@ -184,7 +186,9 @@ Resources:
         - - Field: host-header
             Values:
             - !Ref LoadBalancerHostPattern
-        - [] # neither LoadBalancerHostPattern nor LoadBalancerPath specified
+        - - Field: path-pattern
+            Values: 
+              - '*'
       ListenerArn:
         'Fn::ImportValue': !Sub '${ParentClusterStack}-HttpsListener'
       Priority: !Ref LoadBalancerPriority
