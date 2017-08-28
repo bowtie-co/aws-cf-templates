@@ -130,7 +130,7 @@ Resources:
       VpcId:
         'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
 
-  SecurityGroupIngressMySQL:
+  SecurityGroupSourceIngressMySQL:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: isMySQLCompatible
     Properties:
@@ -141,7 +141,7 @@ Resources:
       SourceSecurityGroupId:
         'Fn::ImportValue': !Sub '${ParentSourceStack}-SecurityGroup'
   
-  SecurityGroupIngressMySQL:
+  SecurityGroupBastionIngressMySQL:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: allowBastionMySQL
     Properties:
@@ -152,7 +152,7 @@ Resources:
       SourceSecurityGroupId:
         'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'
   
-  SecurityGroupIngressPostgreSQL:
+  SecurityGroupSourceIngressPostgreSQL:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: isPostgreSQL
     Properties:
@@ -163,7 +163,7 @@ Resources:
       SourceSecurityGroupId:
         'Fn::ImportValue': !Sub '${ParentSourceStack}-SecurityGroup'
 
-  SecurityGroupIngressPostgreSQL:
+  SecurityGroupBastionIngressPostgreSQL:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: allowBastionPostgreSQL
     Properties:
