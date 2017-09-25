@@ -1,0 +1,203 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Elasticache Cluster (redis or memcached)'
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentVPCStack
+      - ParentSSHBastionStack
+      - ParentSourceStack
+      # - ParentAlertStack
+    - Label:
+        default: 'Elasticache Parameters'
+      Parameters:
+      - ClusterName
+      - AZMode
+      - Engine
+      - EngineVersion
+      - CacheNodeType
+      - NumCacheNodes
+      - AutoMinorVersionUpgrade
+Parameters:
+  ParentVPCStack:
+    Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
+    Type: String
+
+  ParentSSHBastionStack:
+    Description: 'Stack name of the parent SSH bastion'
+    Type: String
+
+  ParentSourceStack:
+    Description: 'Stack name of source stack (ECS Cluster, etc). Source Stack MUST export {STACK_NAME}-SecurityGroup for this to work!'
+    Type: String
+    
+  ClusterName:
+    Description: Name for the cluster
+    Type: String
+
+  AZMode:
+    Description: Specifies whether the nodes in this Memcached cluster are created in a single Availability Zone or created across multiple Availability Zones in the cluster's region.
+    Type: String
+    Default: 'single-az'
+    AllowedValues:
+      - 'single-az'
+      - 'cross-az'
+
+  Engine:
+    Type: String
+    Default: redis
+    AllowedValues:
+      - redis
+      - memcached
+
+  EngineVersion:
+    Description: Specific engine version to use (leave blank for latest)
+    Type: String
+
+  CacheNodeType:
+    Description: Cache instance class
+    Type: String
+    Default: cache.t2.micro
+
+  NumCacheNodes:
+    Description: Number of cache nodes in this cluster
+    Type: Number
+    Default: 1
+
+  AutoMinorVersionUpgrade:
+    Description: Automatically upgrade minor versions
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+Conditions:
+  hasName:
+    !Not [!Equals [!Ref ClusterName, ""]]
+  hasSSHBastion:
+    !Not [!Equals [!Ref ParentSSHBastionStack, ""]]
+  isSpecificVersion:
+    !Not [!Equals [!Ref EngineVersion, ""]]
+  isRedis:
+    !Equals [!Ref Engine, "redis"]
+  isMemcached:
+    !Equals [!Ref Engine, "memcached"]
+  allowBastionRedis:
+    !And [!Condition hasSSHBastion, !Condition isRedis]
+  allowBastionMemcached:
+    !And [!Condition hasSSHBastion, !Condition isMemcached]
+
+Resources:
+  SubnetGroup: 
+    Type: "AWS::ElastiCache::SubnetGroup"
+    Properties: 
+      Description: "Cache Subnet Group"
+      SubnetIds: !Split
+        - ','
+        - 'Fn::ImportValue':
+            !Sub '${ParentVPCStack}-SubnetsPrivate'
+
+  SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub ${AWS::StackName}-elasticache
+      VpcId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+
+  SecurityGroupSourceIngressRedis:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: isRedis
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentSourceStack}-SecurityGroup'
+  
+  SecurityGroupBastionIngressRedis:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: allowBastionRedis
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'
+  
+  SecurityGroupSourceIngressMemcached:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: isMemcached
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 11211
+      ToPort: 11211
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentSourceStack}-SecurityGroup'
+
+  SecurityGroupBastionIngressMemcached:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: allowBastionMemcached
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 11211
+      ToPort: 11211
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'
+
+  ElasticacheCluster:
+    Type: "AWS::ElastiCache::CacheCluster"
+    Properties:
+      AZMode: !Ref AZMode
+      ClusterName: !If [hasName, !Ref ClusterName, !Ref "AWS::NoValue"]
+      AutoMinorVersionUpgrade: !Ref AutoMinorVersionUpgrade
+      Engine: !Ref Engine
+      EngineVersion: !If [isSpecificVersion, !Ref EngineVersion, !Ref "AWS::NoValue"]
+      CacheNodeType: !Ref CacheNodeType
+      NumCacheNodes: !Ref NumCacheNodes
+      CacheSubnetGroupName: !Ref SubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+
+Outputs:
+  TemplateID:
+    Description: 'cloudonaut.io template id'
+    Value: 'rds/elasticache'
+  Cluster:
+    Description: 'Elasticache Cluster'
+    Value: !Ref ElasticacheCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-Cluster'
+  VPC:
+    Description: 'VPC of Elasticache Cluster'
+    Value:
+      'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC'
+  SecurityGroup:
+    Description: 'Security Group of Elasticache Cluster'
+    Value: !Ref SecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroup'
+  Engine:
+    Description: 'ElasticacheCluster engine'
+    Value: !Ref Engine
+    Export:
+      Name: !Sub '${AWS::StackName}-Engine'
+  EndpointAddress:
+    Description: 'ElasticacheCluster endpoint address'
+    Value: !If [isRedis, !GetAtt 'ElasticacheCluster.RedisEndpoint.Address', !GetAtt 'ElasticacheCluster.ConfigurationEndpoint.Address']
+    Export:
+      Name: !Sub '${AWS::StackName}-EndpointAddress'
+  EndpointPort:
+    Description: 'ElasticacheCluster endpoint port'
+    Value: !If [isRedis, !GetAtt 'ElasticacheCluster.RedisEndpoint.Port', !GetAtt 'ElasticacheCluster.ConfigurationEndpoint.Port']
+    Export:
+      Name: !Sub '${AWS::StackName}-EndpointPort'
