@@ -1,0 +1,197 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "ECS Task Definition: based on ecs/task-definition.yaml, a cloudonaut.io template"
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Application Parameters'
+      Parameters:
+      - AppRepo
+      - AppEnv
+      - AppName
+      - AppTag
+      - AppPort
+      - AppCpu
+      - AppMemory
+    - Label:
+        default: 'Nginx Proxy Parameters'
+      Parameters:
+      - NginxServerName
+      - NginxEnforceHttps
+      - NginxClientMaxBodySize
+      - NginxProxyCpu
+      - NginxProxyMemory
+      - NginxContainerName
+      - NginxContainerPort
+Parameters:
+  AppRepo:
+    Type: String
+    Description: The slug for the GitHub repository that will deploy to this service
+  AppEnv:
+    Type: String
+    Default: development
+    AllowedValues: 
+      - development
+      - staging
+      - production
+    Description: Application environment
+  AppName:
+    Type: String
+    Default: app
+    Description: Application name (used as container name, needs to match docker directory for nginx to handle assets)
+  AppTag:
+    Type: String
+    Default: latest
+    Description: AppTag to deploy for this service (docker tag on ECR)
+  AppPort:
+    Type: Number
+    Default: 3000
+    Description: The port that the Rails app is running on
+  AppCpu:
+    Type: Number
+    Default: 128
+    Description: The amount of cpu to allocate to nginx proxy
+  AppMemory:
+    Type: Number
+    Default: 128
+    Description: The amount of memory to allocate to nginx proxy
+  NginxEnforceHttps:
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+    Description: Redirect all HTTP traffic to HTTPS
+  NginxClientMaxBodySize:
+    Type: String
+    Default: '1m'
+    Description: Max upload file size (0 for disabled) (http://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size)
+  NginxServerName:
+    Type: String
+    Default: '_'
+    Description: The nginx server name to listen to (defaults to "_", all server names)
+  NginxProxyCpu:
+    Type: Number
+    Default: 64
+    Description: The amount of cpu to allocate to nginx proxy
+  NginxProxyMemory:
+    Type: Number
+    Default: 64
+    Description: The amount of memory to allocate to nginx proxy
+  NginxContainerName:
+    Type: String
+    Default: nginx
+  NginxContainerPort:
+    Type: Number
+    Default: 80
+    Description: The port that the nginx proxy is running on
+Mappings: {}
+Conditions:
+  HasNginxEnforceHttps: !Equals [!Ref NginxEnforceHttps, 'true']
+Resources:
+  TaskBucket:
+    Type: AWS::S3::Bucket
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref AppRepo
+  CloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref AWS::StackName
+  TaskRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs-tasks.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:*'
+            Resource:
+            - !Sub 'arn:aws:s3:::${TaskBucket}'
+            - !Sub 'arn:aws:s3:::${TaskBucket}/*'
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: !Ref NginxContainerName
+          Image: cmr1/nginx-proxy
+          Essential: true
+          Cpu: !Ref NginxProxyCpu
+          Memory: !Ref NginxProxyMemory
+          Links:
+            - !Sub "${AppName}:${AppName}"
+          PortMappings:
+            - ContainerPort: !Ref NginxContainerPort
+              HostPort: 0
+          VolumesFrom:
+            - SourceContainer: !Ref AppName
+          Environment:
+            - Name: CLIENT_MAX_BODY_SIZE
+              Value: !Ref NginxClientMaxBodySize
+            - Name: SERVER_NAME
+              Value: !Ref NginxServerName
+            - Name: SERVER_BACKENDS
+              Value: !Sub "/:${AppName}:${AppPort}"
+            - Name: SERVER_TYPE
+              Value: !If
+                - HasNginxEnforceHttps
+                - "elb"
+                - "http"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
+          Essential: true
+          Cpu: !Ref AppCpu
+          Memory: !Ref AppMemory
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref AppEnv
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref TaskBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref NginxServerName
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasNginxEnforceHttps
+                - "https://"
+                - "http://"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+Outputs:
+  TaskBucket:
+    Value: !Ref TaskBucket
+    Export: 
+      Name: !Sub '${AWS::StackName}-TaskBucket'
+  Repository:
+    Value: !Ref AppRepo
+    Export:
+      Name: !Sub '${AWS::StackName}-AppRepo'
+  Arn:
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-Arn'

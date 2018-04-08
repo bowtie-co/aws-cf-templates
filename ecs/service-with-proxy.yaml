@@ -1,0 +1,621 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "ECS: service that runs on an ECS cluster and uses the cluster's ALB based on ecs/cluster.yaml, a cloudonaut.io template"
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentClusterStack
+      - ParentLoadBalancerStack
+      - ParentAuthProxyStack
+      - ParentAlertStack
+    - Label:
+        default: 'Load Balancer Parameters'
+      Parameters:
+      - LoadBalancerPriority
+      - LoadBalancerHostPattern
+      - LoadBalancerPath
+      - LoadBalancerCertificateArn
+      - LoadBalancerDeregistrationDelay
+    - Label:
+        default: 'Application Parameters'
+      Parameters:
+      - AppRepo
+      - AppEnv
+      - AppName
+      - AppTag
+      - AppPort
+      - AppCpu
+      - AppMemory
+    - Label:
+        default: 'Nginx Proxy Parameters'
+      Parameters:
+      - NginxServerName
+      - NginxEnforceHttps
+      - NginxClientMaxBodySize
+      - NginxProxyCpu
+      - NginxProxyMemory
+      - NginxContainerName
+      - NginxContainerPort
+    - Label:
+        default: 'Health Check Parameters'
+      Parameters:
+      - HealthCheckPath
+      - HealthCheckTimeout
+      - HealthCheckInterval
+      - HealthCheckProtocol
+      - HealthCheckPort
+      - HealthCheckSuccessCode
+      - HealthCheckHealthyThreshold
+      - HealthCheckUnhealthyThreshold
+    - Label:
+        default: 'Task Parameters'
+      Parameters:
+      - DesiredCount
+      - MaxCapacity
+      - MinCapacity
+    - Label:
+        default: 'Deployment Parameters'
+      Parameters:
+      - DeployMaxPercent
+      - DeployMinPercent
+Parameters:
+  ParentClusterStack:
+    Description: 'Stack name of parent Cluster stack based on ecs/cluster.yaml template.'
+    Type: String
+  ParentLoadBalancerStack:
+    Description: 'Stack name of parent Load Balancer stack based on ec2/alb.yaml template.'
+    Type: String
+  ParentAuthProxyStack:
+    Description: 'Optional stack name of parent auth proxy stack based on security/auth-proxy-*.yaml template.'
+    Type: String
+    Default: ''
+  ParentAlertStack:
+    Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
+    Type: String
+    Default: ''
+  LoadBalancerPriority:
+    Description: 'The priority for the rule. Elastic Load Balancing evaluates rules in priority order, from the lowest value to the highest value. If a request satisfies a rule, Elastic Load Balancing ignores all subsequent rules. A target group can have only one rule with a given priority.'
+    Type: Number
+    Default: 1
+    ConstraintDescription: 'Must be in the range [1-99999]'
+    MinValue: 1
+    MaxValue: 99999
+  LoadBalancerHostPattern:
+    Description: 'Optional host pattern. Specify LoadBalancerPath and/or LoadBalancerHostPattern.'
+    Type: String
+    Default: ''
+    ConstraintDescription: 'Must not be longer than 255'
+    MaxLength: 255
+  LoadBalancerPath:
+    Description: 'Optional path part of the path pattern. E.g., for service, the path pattern will be /service/*.  Specify LoadBalancerPath and/or LoadBalancerHostPattern.'
+    Type: String
+    Default: 'service'
+    ConstraintDescription: 'Must not be longer than 255'
+    MaxLength: 255
+  LoadBalancerCertificateArn:
+    Description: 'Optional Amazon Resource Name (ARN) of the certificate to associate with the load balancer.'
+    Type: String
+    Default: ''
+  LoadBalancerDeregistrationDelay:
+    Description: 'The amount time (in seconds) to wait before changing the state of a deregistering target from draining to unused.'
+    Type: Number
+    Default: 300
+    ConstraintDescription: 'Must be in the range [0-3600]'
+    MinValue: 0
+    MaxValue: 3600
+  HealthCheckPath:
+    Type: String
+    Default: '/'
+    Description: Path to check for app health status
+  HealthCheckTimeout:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 60
+    Description: Timeout (in seconds) for health check requests
+  HealthCheckInterval:
+    Type: Number
+    Default: 10
+    MinValue: 5
+    MaxValue: 300
+    Description: Interval (in seconds) for health check requests
+  HealthCheckProtocol:
+    Type: String
+    Default: HTTP
+    AllowedValues:
+      - HTTP
+      - HTTPS
+    Description: Protocol to use for health check requests
+  HealthCheckSuccessCode:
+    Type: String
+    Default: '200'
+    Description: Successful code pattern for health check to consider instance "healthy" (e.g. "200" or "200-399")
+  HealthCheckHealthyThreshold:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of times a target responds with expected healthy code before being considered "healthy"
+  HealthCheckUnhealthyThreshold:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of times a target responds with unexpected response code before being considered "unhealthy"
+  DesiredCount:
+    Description: 'The number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 2
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
+  MaxCapacity:
+    Description: 'The maximum number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 4
+    ConstraintDescription: 'Must be >= 1'
+    MinValue: 1
+  MinCapacity:
+    Description: 'The minimum number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 2
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
+  DeployMaxPercent:
+    Description: 'Maximum percentage of tasks that can run simultaneously while deploying updates'
+    Type: Number
+    Default: 200
+    MinValue: 100
+    MaxValue: 500
+  DeployMinPercent:
+    Description: 'Minimum percentage of tasks that can run simultaneously while deploying updates'
+    Type: Number
+    Default: 50
+    MinValue: 0
+    MaxValue: 100
+  AppRepo:
+    Type: String
+    Description: The slug for the GitHub repository that will deploy to this service
+  AppEnv:
+    Type: String
+    Default: development
+    AllowedValues: 
+      - development
+      - staging
+      - production
+    Description: Application environment
+  AppName:
+    Type: String
+    Default: app
+    Description: Application name (used as container name, needs to match docker directory for nginx to handle assets)
+  AppTag:
+    Type: String
+    Default: latest
+    Description: AppTag to deploy for this service (docker tag on ECR)
+  AppPort:
+    Type: Number
+    Default: 3000
+    Description: The port that the Rails app is running on
+  AppCpu:
+    Type: Number
+    Default: 128
+    Description: The amount of cpu to allocate to nginx proxy
+  AppMemory:
+    Type: Number
+    Default: 128
+    Description: The amount of memory to allocate to nginx proxy
+  NginxClientMaxBodySize:
+    Type: String
+    Default: '1m'
+    Description: Max upload file size (0 for disabled) (http://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size)
+  NginxProxyCpu:
+    Type: Number
+    Default: 64
+    Description: The amount of cpu to allocate to nginx proxy
+  NginxProxyMemory:
+    Type: Number
+    Default: 64
+    Description: The amount of memory to allocate to nginx proxy
+  NginxContainerName:
+    Type: String
+    Default: nginx
+  NginxContainerPort:
+    Type: Number
+    Default: 80
+    Description: The port that the nginx proxy is running on
+Mappings: {}
+Conditions:
+  HasAuthProxySecurityGroup: !Not [!Equals [!Ref ParentAuthProxyStack, '']]
+  HasNotAuthProxySecurityGroup: !Equals [!Ref ParentAuthProxyStack, '']
+  HasLoadBalancerPath: !Not [!Equals [!Ref LoadBalancerPath, '']]
+  HasLoadBalancerHostPattern: !Not [!Equals [!Ref LoadBalancerHostPattern, '']]
+  HasCertificateArn: !Not [!Equals [!Ref LoadBalancerCertificateArn, '']]
+  HasAuthProxySecurityGroupAndCertificateArn: !And [!Condition HasAuthProxySecurityGroup, !Condition HasCertificateArn]
+  HasNotAuthProxySecurityGroupAndCertificateArn: !And [!Condition HasNotAuthProxySecurityGroup, !Condition HasCertificateArn]
+  HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+Resources:
+  TaskDefinition:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/bowtie-test-cf-templates/ecs/task-definition.yaml
+      Parameters:
+        AppRepo: !Ref AppRepo
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        AppTag: !Ref AppTag
+        AppPort: !Ref AppPort
+        AppCpu: !Ref AppCpu
+        AppMemory: !Ref AppMemory
+        NginxServerName: !If
+          - HasLoadBalancerHostPattern
+          - !Ref LoadBalancerHostPattern
+          - '_'
+        NginxEnforceHttps: !If
+          - HasCertificateArn
+          - true
+          - false
+        NginxClientMaxBodySize: !Ref NginxClientMaxBodySize
+        NginxProxyCpu: !Ref NginxProxyCpu
+        NginxProxyMemory: !Ref NginxProxyMemory
+        NginxContainerName: !Ref NginxContainerName
+        NginxContainerPort: !Ref NginxContainerPort
+  SecurityGroupInALB:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-SecurityGroup'
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-SecurityGroup'
+  LoadBalancerTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: !Ref HealthCheckInterval
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckProtocol: !Ref HealthCheckProtocol
+      HealthCheckTimeoutSeconds: !Ref HealthCheckTimeout
+      HealthyThresholdCount: !Ref HealthCheckHealthyThreshold
+      Matcher:
+        HttpCode: !Ref HealthCheckSuccessCode
+      Port: !Ref NginxContainerPort
+      Protocol: !Ref HealthCheckProtocol
+      UnhealthyThresholdCount: !Ref HealthCheckUnhealthyThreshold
+      VpcId:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-VPC'
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: !Ref LoadBalancerDeregistrationDelay
+  HttpListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+      - TargetGroupArn: !Ref LoadBalancerTargetGroup
+        Type: forward
+      LoadBalancerArn:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-Arn'
+      Port: 80
+      Protocol: HTTP
+  HttpsListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Condition: HasCertificateArn
+    Properties:
+      Certificates:
+      - LoadBalancerCertificateArn: !Ref LoadBalancerCertificateArn
+      DefaultActions:
+      - TargetGroupArn: !Ref LoadBalancerTargetGroup
+        Type: forward
+      LoadBalancerArn:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-Arn'
+      Port: 443
+      Protocol: HTTPS
+  HTTPCodeELB5XXTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Application load balancer returns 5XX HTTP status codes'
+      Namespace: 'AWS/ApplicationELB'
+      MetricName: HTTPCode_ELB_5XX_Count
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      Dimensions:
+      - Name: LoadBalancer
+        Value:
+          'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-FullName'
+      - Name: TargetGroup
+        Value: !GetAtt LoadBalancerTargetGroup.TargetGroupFullName
+  HTTPCodeTarget5XXTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Application load balancer receives 5XX HTTP status codes from targets'
+      Namespace: 'AWS/ApplicationELB'
+      MetricName: HTTPCode_Target_5XX_Count
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      Dimensions:
+      - Name: LoadBalancer
+        Value:
+          'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-FullName'
+      - Name: TargetGroup
+        Value: !GetAtt LoadBalancerTargetGroup.TargetGroupFullName
+  RejectedConnectionCountTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Application load balancer rejected connections because the load balancer had reached its maximum number of connections'
+      Namespace: 'AWS/ApplicationELB'
+      MetricName: RejectedConnectionCount
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      Dimensions:
+      - Name: LoadBalancer
+        Value:
+          'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-FullName'
+      - Name: TargetGroup
+        Value: !GetAtt LoadBalancerTargetGroup.TargetGroupFullName
+  TargetConnectionErrorCountTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Application load balancer could not connect to targets'
+      Namespace: 'AWS/ApplicationELB'
+      MetricName: TargetConnectionErrorCount
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      Dimensions:
+      - Name: LoadBalancer
+        Value:
+          'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-FullName'
+      - Name: TargetGroup
+        Value: !GetAtt LoadBalancerTargetGroup.TargetGroupFullName
+  LoadBalancerHttpListenerRule:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      Conditions: !If
+      - HasLoadBalancerPath
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+          - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+        - - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+        - - Field: path-pattern
+            Values: 
+              - '*'
+      ListenerArn: !Ref HttpListener
+      Priority: !Ref LoadBalancerPriority
+  LoadBalancerHttpsListenerRule:
+    Condition: HasCertificateArn
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      Conditions: !If
+      - HasLoadBalancerPath
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+          - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+        - - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+        - - Field: path-pattern
+            Values: 
+              - '*'
+      ListenerArn: !Ref HttpsListener
+      Priority: !Ref LoadBalancerPriority
+  ServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole'
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs.amazonaws.com'
+          Action: 'sts:AssumeRole'
+  Service:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      Cluster:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      DeploymentConfiguration:
+        MaximumPercent: !Ref DeployMaxPercent
+        MinimumHealthyPercent: !Ref DeployMinPercent
+      DesiredCount: !Ref DesiredCount
+      LoadBalancers:
+      - ContainerName: !Ref NginxContainerName
+        ContainerPort: !Ref NginxContainerPort
+        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      PlacementStrategies:
+      - Type: spread
+        Field: 'attribute:ecs.availability-zone'
+      - Type: spread
+        Field: instanceId
+      Role: !GetAtt 'ServiceRole.Arn'
+      TaskDefinition: !GetAtt 'TaskDefinition.Outputs.Arn'
+  ScalableTargetRole: # based on http://docs.aws.amazon.com/AmazonECS/latest/developerguide/autoscale_IAM_role.html
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'application-autoscaling.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: ecs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ecs:DescribeServices'
+            - 'ecs:UpdateService'
+            Resource: '*'
+      - PolicyName: cloudwatch
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'cloudwatch:DescribeAlarms'
+            Resource: '*'
+  ScalableTarget:
+    Type: 'AWS::ApplicationAutoScaling::ScalableTarget'
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub
+      - 'service/${Cluster}/${Service}'
+      - Cluster:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+        Service: !GetAtt 'Service.Name'
+      RoleARN: !GetAtt 'ScalableTargetRole.Arn'
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ServiceNamespace: ecs
+  ScaleUpPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-scale-up'
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 300
+        MinAdjustmentMagnitude: 1
+        StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          ScalingAdjustment: 25
+  ScaleDownPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-scale-down'
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 300
+        MinAdjustmentMagnitude: 1
+        StepAdjustments:
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -25
+  CPUUtilizationTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Average CPU utilization over last 10 minutes higher than 80%'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+  CPUUtilizationHighAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Service is running out of CPU'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 60
+      AlarmActions:
+      - !Ref ScaleUpPolicy
+  CPUUtilizationLowAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Service is wasting CPU'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: LessThanThreshold
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 30
+      AlarmActions:
+      - !Ref ScaleDownPolicy
+Outputs:
+  TemplateID:
+    Description: 'cloudonaut.io template id.'
+    Value: 'ecs/service-cluster-alb'
+  TemplateVersion:
+    Description: 'cloudonaut.io template version.'
+    Value: '__VERSION__'
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
