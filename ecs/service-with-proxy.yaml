@@ -17,12 +17,12 @@ Metadata:
       - LoadBalancerPriority
       - LoadBalancerHostPattern
       - LoadBalancerPath
-      - LoadBalancerCertificateArn
       - LoadBalancerDeregistrationDelay
     - Label:
         default: 'Application Parameters'
       Parameters:
       - AppRepo
+      - AppType
       - AppEnv
       - AppName
       - AppTag
@@ -95,10 +95,6 @@ Parameters:
     Default: 'service'
     ConstraintDescription: 'Must not be longer than 255'
     MaxLength: 255
-  LoadBalancerCertificateArn:
-    Description: 'Optional Amazon Resource Name (ARN) of the certificate to associate with the load balancer.'
-    Type: String
-    Default: ''
   LoadBalancerDeregistrationDelay:
     Description: 'The amount time (in seconds) to wait before changing the state of a deregistering target from draining to unused.'
     Type: Number
@@ -178,6 +174,12 @@ Parameters:
   AppRepo:
     Type: String
     Description: The slug for the GitHub repository that will deploy to this service
+  AppType:
+    Type: String
+    Description: Type of this application
+    AllowedValues:
+      - basic
+      - rails
   AppEnv:
     Type: String
     Default: development
@@ -225,23 +227,29 @@ Parameters:
     Type: Number
     Default: 80
     Description: The port that the nginx proxy is running on
+  NginxEnforceHttps:
+    Type: String
+    Default: false
+    AllowedValues:
+      - false
+      - true
+    Description: Redirect all HTTP requests to HTTPS
 Mappings: {}
 Conditions:
   HasAuthProxySecurityGroup: !Not [!Equals [!Ref ParentAuthProxyStack, '']]
   HasNotAuthProxySecurityGroup: !Equals [!Ref ParentAuthProxyStack, '']
   HasLoadBalancerPath: !Not [!Equals [!Ref LoadBalancerPath, '']]
   HasLoadBalancerHostPattern: !Not [!Equals [!Ref LoadBalancerHostPattern, '']]
-  HasCertificateArn: !Not [!Equals [!Ref LoadBalancerCertificateArn, '']]
-  HasAuthProxySecurityGroupAndCertificateArn: !And [!Condition HasAuthProxySecurityGroup, !Condition HasCertificateArn]
-  HasNotAuthProxySecurityGroupAndCertificateArn: !And [!Condition HasNotAuthProxySecurityGroup, !Condition HasCertificateArn]
+  HasNginxEnforceHttps: !Equals [!Ref NginxEnforceHttps, 'true']
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
 Resources:
   TaskDefinition:
     Type: 'AWS::CloudFormation::Stack'
     Properties:
-      TemplateURL: https://s3.us-east-2.amazonaws.com/bowtie-test-cf-templates/ecs/task-definition.yaml
+      TemplateURL: https://s3.us-east-1.amazonaws.com/bowtie-aws-cf-templates/ecs/task-definition.yaml
       Parameters:
         AppRepo: !Ref AppRepo
+        AppType: !Ref AppType
         AppEnv: !Ref AppEnv
         AppName: !Ref AppName
         AppTag: !Ref AppTag
@@ -252,10 +260,7 @@ Resources:
           - HasLoadBalancerHostPattern
           - !Ref LoadBalancerHostPattern
           - '_'
-        NginxEnforceHttps: !If
-          - HasCertificateArn
-          - true
-          - false
+        NginxEnforceHttps: !Ref NginxEnforceHttps
         NginxClientMaxBodySize: !Ref NginxClientMaxBodySize
         NginxProxyCpu: !Ref NginxProxyCpu
         NginxProxyMemory: !Ref NginxProxyMemory
@@ -289,29 +294,6 @@ Resources:
       TargetGroupAttributes:
       - Key: deregistration_delay.timeout_seconds
         Value: !Ref LoadBalancerDeregistrationDelay
-  HttpListener:
-    Type: 'AWS::ElasticLoadBalancingV2::Listener'
-    Properties:
-      DefaultActions:
-      - TargetGroupArn: !Ref LoadBalancerTargetGroup
-        Type: forward
-      LoadBalancerArn:
-        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-Arn'
-      Port: 80
-      Protocol: HTTP
-  HttpsListener:
-    Type: 'AWS::ElasticLoadBalancingV2::Listener'
-    Condition: HasCertificateArn
-    Properties:
-      Certificates:
-      - LoadBalancerCertificateArn: !Ref LoadBalancerCertificateArn
-      DefaultActions:
-      - TargetGroupArn: !Ref LoadBalancerTargetGroup
-        Type: forward
-      LoadBalancerArn:
-        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-Arn'
-      Port: 443
-      Protocol: HTTPS
   HTTPCodeELB5XXTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -419,10 +401,11 @@ Resources:
         - - Field: path-pattern
             Values: 
               - '*'
-      ListenerArn: !Ref HttpListener
+      ListenerArn:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-HttpListener'
       Priority: !Ref LoadBalancerPriority
   LoadBalancerHttpsListenerRule:
-    Condition: HasCertificateArn
+    Condition: HasNginxEnforceHttps
     Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
     Properties:
       Actions:
@@ -449,7 +432,8 @@ Resources:
         - - Field: path-pattern
             Values: 
               - '*'
-      ListenerArn: !Ref HttpsListener
+      ListenerArn:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-HttpsListener'
       Priority: !Ref LoadBalancerPriority
   ServiceRole:
     Type: 'AWS::IAM::Role'

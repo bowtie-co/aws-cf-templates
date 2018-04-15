@@ -7,6 +7,7 @@ Metadata:
     - Label:
         default: 'Application Parameters'
       Parameters:
+      - AppType
       - AppRepo
       - AppEnv
       - AppName
@@ -25,6 +26,12 @@ Metadata:
       - NginxContainerName
       - NginxContainerPort
 Parameters:
+  AppType:
+    Type: String
+    Description: Type of this application
+    AllowedValues:
+      - basic
+      - rails
   AppRepo:
     Type: String
     Description: The slug for the GitHub repository that will deploy to this service
@@ -89,6 +96,8 @@ Parameters:
 Mappings: {}
 Conditions:
   HasNginxEnforceHttps: !Equals [!Ref NginxEnforceHttps, 'true']
+  HasAppTypeBasic: !Equals [!Ref AppType, 'basic']
+  HasAppTypeRails: !Equals [!Ref AppType, 'rails']
 Resources:
   TaskBucket:
     Type: AWS::S3::Bucket
@@ -162,6 +171,81 @@ Resources:
           Essential: true
           Cpu: !Ref AppCpu
           Memory: !Ref AppMemory
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref AppEnv
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref TaskBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref NginxServerName
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasNginxEnforceHttps
+                - "https://"
+                - "http://"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  DBResetTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasAppTypeRails
+    Properties:
+      Family: !Sub ${AWS::StackName}-db-reset
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
+          Cpu: !Ref AppCpu
+          Memory: !Ref AppMemory
+          Command:
+            - bundle
+            - exec
+            - rake 
+            - db:reset
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref AppEnv
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref TaskBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref NginxServerName
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasNginxEnforceHttps
+                - "https://"
+                - "http://"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  DBMigrateTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasAppTypeRails
+    Properties:
+      Family: !Sub ${AWS::StackName}-db-migrate
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
+          Essential: true
+          Cpu: !Ref AppCpu
+          Memory: !Ref AppMemory
+          Command:
+            - bundle
+            - exec
+            - rake 
+            - db:migrate
           Environment:
             - Name: APP_ENV
               Value: !Ref AppEnv

@@ -1,0 +1,368 @@
+# Project Creates:
+#   - CodeBuild Project
+#   - Generic & Build Project S3 Buckets
+#   - DynamoDB Tables for Builds & Deploys, etc
+#   - KMS Key for encrypted env files
+#   - VPC Always?
+#   - ENV?
+#     - dev/stage/prod/etc
+#     - kms key?
+#     - s3 bucket?
+#     - optional infrastructure? ecs cluster/static site/etc (acts as target for deployable artifacts?)
+#   - IF [ TARGET == ECS ]
+#     - 1+ ECS Cluster
+#     - 0+ RDS/ElastiCache (optional addon for ECS targets)
+#     - ECR Repository for ECS target
+#     - 1+ Deployable ECS Service (per env target)
+#   - IF [ TARGET == S3 ]
+#     - 1+ Deployable State Sites (per env target)
+Conditions:
+  HasTargetEcs: { "Fn::Equals" : ["${self:custom.project.target}", "ecs"] }
+  HasTargetS3: { "Fn::Equals" : ["${self:custom.project.target}", "s3"] }
+Resources:
+  siteBucket:
+    Type: 'AWS::S3::Bucket'
+    Condition: HasTargetS3
+    Properties:
+      BucketName: ${self:custom.siteBucketName}
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+    # DeletionPolicy: Retain
+  siteBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Condition: HasTargetS3
+    Properties:
+      PolicyDocument:
+        Id: PublicS3WebsitePolicy
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: 'arn:aws:s3:::${self:custom.siteBucketName}/*'
+      Bucket: ${self:custom.siteBucketName}
+  buildBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: ${self:custom.buildBucketName}
+  ecrRepository:
+    Type: AWS::ECR::Repository
+    Condition: HasTargetEcs
+    Properties:
+      RepositoryName: ${self:custom.ecrRepoName}
+  buildsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:custom.buildsTableName}
+      AttributeDefinitions:
+        - AttributeName: project_name
+          AttributeType: 'S'
+        - AttributeName: build_timestamp
+          AttributeType: 'N'
+      KeySchema:
+        - AttributeName: project_name
+          KeyType: HASH
+        - AttributeName: build_timestamp
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  deploysTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:custom.deploysTableName}
+      AttributeDefinitions:
+        - AttributeName: project_name
+          AttributeType: 'S'
+        - AttributeName: deploy_timestamp
+          AttributeType: 'N'
+      KeySchema:
+        - AttributeName: project_name
+          KeyType: HASH
+        - AttributeName: deploy_timestamp
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  buildProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: buildProjectRole
+    Properties:
+      Name: ${self:custom.buildProjectName}
+      ServiceRole: ${self:custom.buildProjectRoleName}
+      Cache:
+        Type: S3
+        Location: ${self:custom.buildBucketName}
+      Artifacts:
+        Type: no_artifacts
+      Source:
+        Location: https://github.com/${self:custom.project.github.repo}.git
+        Type: "GITHUB"
+        Auth:
+          Type: OAUTH
+          Resource: ${self:custom.project.github.token}
+      Environment:
+        ComputeType: "BUILD_GENERAL1_SMALL"
+        Image: "aws/codebuild/docker:1.12.1"
+        Type: "LINUX_CONTAINER"
+        EnvironmentVariables:
+          - Name: CI
+            Value: 'true'
+          - Name: GITHUB_TOKEN
+            Value: ${self:custom.project.github.token}
+          - Name: AWS_REGION
+            Value: ${self:custom.region}
+          - Name: AWS_ACCOUNT
+            Value: { "Ref" : "AWS::AccountId" }
+          - Name: REPO_SLUG
+            Value: ${self:custom.ecrRepoName}
+          - Name: AWS_BUCKET_NAME
+            Value: ${self:custom.buildBucketName}
+          - Name: AWS_SITE_BUCKET_NAME
+            Value: ${self:custom.siteBucketName}
+          - Name: IAM_ROLE_NAME
+            Value: ${self:custom.buildProjectRoleName}
+          - Name: GITHUB_REPO
+            Value: ${self:custom.project.github.repo, ""}
+          - Name: AIRBRAKE_PROJECT_ID
+            Value: ${self:custom.project.airbrake.id, ""}
+          - Name: AIRBRAKE_PROJECT_KEY
+            Value: ${self:custom.project.airbrake.key, ""}
+  buildProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ${self:custom.buildProjectRoleName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: buildProject
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:*"
+                Resource:
+                  - 'arn:aws:s3:::${self:custom.buildBucketName}'
+                  - 'arn:aws:s3:::${self:custom.buildBucketName}/*'
+                  - 'arn:aws:s3:::${self:custom.siteBucketName}'
+                  - 'arn:aws:s3:::${self:custom.siteBucketName}/*'
+              - Effect: "Allow"
+                Action:
+                  - "ecr:InitiateLayerUpload"
+                  - "ecr:UploadLayerPart"
+                  - "ecr:CompleteLayerUpload"
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:PutImage"
+                  - "ecr:GetAuthorizationToken"
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "cloudfront:ListInvalidations"
+                  - "cloudfront:GetInvalidation"
+                  - "cloudfront:CreateInvalidation"
+                Resource: "*"
+  startBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ${self:custom.startBuildRoleName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: notifySlack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "ecr:BatchGetImage"
+                  - "ecr:DescribeImages"
+                  - "ecr:PutImage"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/lambda/${self:service}-${self:custom.stage}-*:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "logs:PutLogEvents"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/lambda/${self:service}-${self:custom.stage}-*:*:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+                Resource: 
+                  - { "Fn::Join" : ["", ["arn:aws:codebuild:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":project/${self:custom.buildProjectName}"]]}
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:dynamodb:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":table/${self:custom.buildsTableName}"]]}
+              - Effect: "Allow"
+                Action:
+                  - "logs:GetLogEvents"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/codebuild/${self:custom.buildProjectName}:log-stream:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:DescribeStacks"
+                Resource: 
+                  - { "Fn::Join" : ["", ["arn:aws:cloudformation:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":stack/${self:custom.projectName}-*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "iam:PassRole"
+                Resource: 
+                  - { "Fn::Join" : ["", ["arn:aws:iam::", { "Ref" : "AWS::AccountId" }, ":role/${self:custom.serviceUpdateRoleName}" ] ]  }
+              
+  notifySlackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ${self:custom.notifySlackRoleName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: notifySlack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/lambda/${self:service}-${self:custom.stage}-*:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "logs:PutLogEvents"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/lambda/${self:service}-${self:custom.stage}-*:*:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "ecs:ListTaskDefinitions"
+                  - "cloudformation:DescribeStacks"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "ecs:RunTask"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:ecs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":task-definition/${self:custom.projectName}*" ] ]  }
+  updateServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ${self:custom.serviceUpdateRoleName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: updateService
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "SNS:Publish"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.stackChangeTopic}" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "application-autoscaling:Describe*"
+                  - "application-autoscaling:PutScalingPolicy"
+                  - "application-autoscaling:DeleteScalingPolicy"
+                  - "application-autoscaling:RegisterScalableTarget"
+                  - "cloudwatch:DescribeAlarms"
+                  - "cloudwatch:PutMetricAlarm"
+                  - "ecs:List*"
+                  - "ecs:Describe*"
+                  - "ecs:RegisterTaskDefinition"
+                  - "ecs:DeregisterTaskDefinition"
+                  - "ecs:UpdateService"
+                  - "iam:AttachRolePolicy"
+                  - "iam:CreateRole"
+                  - "iam:GetPolicy"
+                  - "iam:GetPolicyVersion"
+                  - "iam:GetRole"
+                  - "iam:PassRole"
+                  - "iam:ListAttachedRolePolicies"
+                  - "iam:ListRoles"
+                  - "iam:ListGroups"
+                  - "iam:ListUsers"
+                Resource: "*"
+  updateStackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ${self:custom.stackUpdateRoleName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: updateStack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "ecr:BatchGetImage"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/lambda/${self:service}-${self:custom.stage}-*:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "logs:PutLogEvents"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/lambda/${self:service}-${self:custom.stage}-*:*:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "logs:GetLogEvents"
+                Resource:
+                  - { "Fn::Join" : ["", ["arn:aws:logs:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":log-group:/aws/codebuild/${self:custom.buildProjectName}:log-stream:*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:DescribeStacks"
+                Resource: 
+                  - { "Fn::Join" : ["", ["arn:aws:cloudformation:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":stack/${self:custom.projectName}-*" ] ]  }
+              - Effect: "Allow"
+                Action:
+                  - "iam:PassRole"
+                Resource: 
+                  - { "Fn::Join" : ["", ["arn:aws:iam::", { "Ref" : "AWS::AccountId" }, ":role/${self:custom.serviceUpdateRoleName}" ] ]  }

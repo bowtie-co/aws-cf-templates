@@ -12,7 +12,9 @@ Metadata:
     - Label:
         default: 'Load Balancer Parameters'
       Parameters:
-      - LoadBalancerScheme
+      - Scheme
+      - CertificateArn
+      - DeregistrationDelay
 Parameters:
   ParentVPCStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
@@ -21,17 +23,30 @@ Parameters:
     Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
     Type: String
     Default: ''
-  LoadBalancerScheme:
+  Scheme:
     Description: 'Indicates whether the load balancer in front of the ECS service is internet-facing or internal.'
     Type: String
     Default: 'internet-facing'
     AllowedValues:
     - 'internet-facing'
     - internal
+  CertificateArn:
+    Description: 'Optional Amazon Resource Name (ARN) of the certificate to associate with the load balancer.'
+    Type: String
+    Default: ''
+  DeregistrationDelay:
+    Description: 'The amount time (in seconds) to wait before changing the state of a deregistering target from draining to unused.'
+    Type: Number
+    Default: 300
+    ConstraintDescription: 'Must be in the range [0-3600]'
+    MinValue: 0
+    MaxValue: 3600
+
 Mappings: {}
 Conditions:
-  HasLoadBalancerSchemeInternal: !Equals [!Ref LoadBalancerScheme, 'internal']
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+  HasSchemeInternal: !Equals [!Ref Scheme, 'internal']
+  HasCertificateArn: !Not [!Equals [!Ref CertificateArn, '']]
 Resources:
   SecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
@@ -49,12 +64,69 @@ Resources:
       CidrIp: '0.0.0.0/0'
   SecurityGroupHttps:
     Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: HasCertificateArn
     Properties:
       GroupId: !Ref SecurityGroup
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
       CidrIp: '0.0.0.0/0'
+  DefaultTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: '/'
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: '200-299'
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 3
+      VpcId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: !Ref DeregistrationDelay
+  HttpListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+      - TargetGroupArn: !Ref DefaultTargetGroup
+        Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+  HttpsListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Condition: HasCertificateArn
+    Properties:
+      Certificates:
+      - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+      - TargetGroupArn: !Ref DefaultTargetGroup
+        Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: !Sub '${AWS::StackName}'
+      Scheme: !Ref Scheme
+      SecurityGroups:
+      - !Ref SecurityGroup
+      Subnets: !If
+      - HasSchemeInternal
+      - !Split
+        - ','
+        - 'Fn::ImportValue':
+            !Sub '${ParentVPCStack}-SubnetsPrivate'
+      - !Split
+        - ','
+        - 'Fn::ImportValue':
+            !Sub '${ParentVPCStack}-SubnetsPublic'
   HTTPCodeELB5XXTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -123,23 +195,6 @@ Resources:
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
-  LoadBalancer:
-    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
-    Properties:
-      Name: !Sub '${AWS::StackName}'
-      Scheme: !Ref LoadBalancerScheme
-      SecurityGroups:
-      - !Ref SecurityGroup
-      Subnets: !If
-      - HasLoadBalancerSchemeInternal
-      - !Split
-        - ','
-        - 'Fn::ImportValue':
-            !Sub '${ParentVPCStack}-SubnetsPrivate'
-      - !Split
-        - ','
-        - 'Fn::ImportValue':
-            !Sub '${ParentVPCStack}-SubnetsPublic'
 Outputs:
   TemplateID:
     Description: 'cloudonaut.io template id.'
@@ -175,3 +230,24 @@ Outputs:
     Value: !GetAtt LoadBalancer.CanonicalHostedZoneID
     Export:
       Name: !Sub '${AWS::StackName}-CanonicalHostedZoneID'
+  DefaultTargetGroupArn:
+    Description: 'Arn of the Default Target Group on this Load Balancer.'
+    Value: !Ref DefaultTargetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-DefaultTargetGroupArn'
+  DefaultTargetGroupFullName:
+    Description: 'Full name of the Default Target Group on this Load Balancer.'
+    Value: !GetAtt DefaultTargetGroup.TargetGroupFullName
+    Export:
+      Name: !Sub '${AWS::StackName}-DefaultTargetGroupFullName'
+  HttpListener:
+    Description: 'HTTP Listener'
+    Value: !Ref HttpListener
+    Export:
+      Name: !Sub '${AWS::StackName}-HttpListener'
+  HttpsListener:
+    Condition: HasCertificateArn
+    Description: 'HTTPS Listener'
+    Value: !Ref HttpsListener
+    Export:
+      Name: !Sub '${AWS::StackName}-HttpsListener'
