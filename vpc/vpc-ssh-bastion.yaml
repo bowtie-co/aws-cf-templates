@@ -155,6 +155,7 @@ Resources:
           Statement:
           - Effect: Allow
             Action:
+            - 'ec2:DescribeInstances'
             - 'ec2:AssociateAddress'
             Resource:
             - '*'
@@ -202,6 +203,13 @@ Resources:
             yum:
               awslogs: []
           files:
+            '/usr/bin/list-instances':
+              content: !Sub |
+                #!/bin/bash
+                aws ec2 describe-instances --region ${AWS::Region} --query 'Reservations[].Instances[].[PrivateIpAddress,Tags[?Key==`Name`].Value[]]' --output text | sed '$!N;s/\n/ /'
+              mode: '000755'
+              owner: root
+              group: root
             '/etc/awslogs/awscli.conf':
               content: !Sub |
                 [default]
@@ -389,10 +397,7 @@ Resources:
       MinSize: 1
       Tags:
       - Key: Name
-        Value: !Sub
-        - 'SSH bastion host/instance 10.${ClassB}.0.0/16'
-        - ClassB:
-            'Fn::ImportValue': !Sub '${ParentVPCStack}-ClassB'
+        Value: !Sub '${AWS::StackName}'
         PropagateAtLaunch: true
       NotificationConfigurations: !If
       - HasAlertTopic

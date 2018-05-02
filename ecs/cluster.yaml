@@ -910,7 +910,7 @@ Resources:
       MaxSize: !Ref MaxSize
       DesiredCapacity: !Ref DesiredCapacity
       HealthCheckGracePeriod: 300
-      HealthCheckType: ELB
+      HealthCheckType: EC2
       TargetGroupARNs:
       - !Ref DefaultTargetGroup
       NotificationConfigurations: !If
@@ -927,7 +927,7 @@ Resources:
           !Sub '${ParentVPCStack}-Subnets${SubnetsReach}'
       Tags:
       - Key: Name
-        Value: 'ecs-cluster'
+        Value: !Sub '${AWS::StackName}-instance'
         PropagateAtLaunch: true
     CreationPolicy:
       ResourceSignal:
