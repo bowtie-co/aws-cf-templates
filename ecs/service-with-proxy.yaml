@@ -9,6 +9,7 @@ Metadata:
       Parameters:
       - ParentClusterStack
       - ParentLoadBalancerStack
+      - ParentTaskStack
       - ParentAuthProxyStack
       - ParentAlertStack
     - Label:
@@ -18,27 +19,7 @@ Metadata:
       - LoadBalancerHostPattern
       - LoadBalancerPath
       - LoadBalancerDeregistrationDelay
-    - Label:
-        default: 'Application Parameters'
-      Parameters:
-      - AppRepo
-      - AppType
-      - AppEnv
-      - AppName
-      - AppTag
-      - AppPort
-      - AppCpu
-      - AppMemory
-    - Label:
-        default: 'Nginx Proxy Parameters'
-      Parameters:
-      - NginxServerName
-      - NginxEnforceHttps
-      - NginxClientMaxBodySize
-      - NginxProxyCpu
-      - NginxProxyMemory
-      - NginxContainerName
-      - NginxContainerPort
+      - LoadBalancerListenHttps
     - Label:
         default: 'Health Check Parameters'
       Parameters:
@@ -63,10 +44,13 @@ Metadata:
       - DeployMinPercent
 Parameters:
   ParentClusterStack:
-    Description: 'Stack name of parent Cluster stack based on ecs/cluster.yaml template.'
+    Description: 'Stack name of parent Cluster stack based on ecs/ecs-cluster.yaml template.'
     Type: String
   ParentLoadBalancerStack:
     Description: 'Stack name of parent Load Balancer stack based on ec2/alb.yaml template.'
+    Type: String
+  ParentTaskStack:
+    Description: 'Stack name of parent Task Definition stack based on ecs/task-definition.yaml template.'
     Type: String
   ParentAuthProxyStack:
     Description: 'Optional stack name of parent auth proxy stack based on security/auth-proxy-*.yaml template.'
@@ -171,101 +155,22 @@ Parameters:
     Default: 50
     MinValue: 0
     MaxValue: 100
-  AppRepo:
-    Type: String
-    Description: The slug for the GitHub repository that will deploy to this service
-  AppType:
-    Type: String
-    Description: Type of this application
-    AllowedValues:
-      - basic
-      - rails
-  AppEnv:
-    Type: String
-    Default: development
-    AllowedValues: 
-      - development
-      - staging
-      - production
-    Description: Application environment
-  AppName:
-    Type: String
-    Default: app
-    Description: Application name (used as container name, needs to match docker directory for nginx to handle assets)
-  AppTag:
-    Type: String
-    Default: latest
-    Description: AppTag to deploy for this service (docker tag on ECR)
-  AppPort:
-    Type: Number
-    Default: 3000
-    Description: The port that the Rails app is running on
-  AppCpu:
-    Type: Number
-    Default: 128
-    Description: The amount of cpu to allocate to nginx proxy
-  AppMemory:
-    Type: Number
-    Default: 128
-    Description: The amount of memory to allocate to nginx proxy
-  NginxClientMaxBodySize:
-    Type: String
-    Default: '1m'
-    Description: Max upload file size (0 for disabled) (http://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size)
-  NginxProxyCpu:
-    Type: Number
-    Default: 64
-    Description: The amount of cpu to allocate to nginx proxy
-  NginxProxyMemory:
-    Type: Number
-    Default: 64
-    Description: The amount of memory to allocate to nginx proxy
-  NginxContainerName:
-    Type: String
-    Default: nginx
-  NginxContainerPort:
-    Type: Number
-    Default: 80
-    Description: The port that the nginx proxy is running on
-  NginxEnforceHttps:
+  LoadBalancerListenHttps:
     Type: String
     Default: false
     AllowedValues:
       - false
       - true
-    Description: Redirect all HTTP requests to HTTPS
+    Description: Enable HTTPS Listener for Service TargetGroup
 Mappings: {}
 Conditions:
   HasAuthProxySecurityGroup: !Not [!Equals [!Ref ParentAuthProxyStack, '']]
   HasNotAuthProxySecurityGroup: !Equals [!Ref ParentAuthProxyStack, '']
   HasLoadBalancerPath: !Not [!Equals [!Ref LoadBalancerPath, '']]
   HasLoadBalancerHostPattern: !Not [!Equals [!Ref LoadBalancerHostPattern, '']]
-  HasNginxEnforceHttps: !Equals [!Ref NginxEnforceHttps, 'true']
+  HasLoadBalancerListenHttps: !Equals [!Ref LoadBalancerListenHttps, 'true']
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
 Resources:
-  TaskDefinition:
-    Type: 'AWS::CloudFormation::Stack'
-    Properties:
-      TemplateURL: https://s3.us-east-1.amazonaws.com/bowtie-aws-cf-templates/ecs/task-definition.yaml
-      Parameters:
-        AppRepo: !Ref AppRepo
-        AppType: !Ref AppType
-        AppEnv: !Ref AppEnv
-        AppName: !Ref AppName
-        AppTag: !Ref AppTag
-        AppPort: !Ref AppPort
-        AppCpu: !Ref AppCpu
-        AppMemory: !Ref AppMemory
-        NginxServerName: !If
-          - HasLoadBalancerHostPattern
-          - !Ref LoadBalancerHostPattern
-          - '_'
-        NginxEnforceHttps: !Ref NginxEnforceHttps
-        NginxClientMaxBodySize: !Ref NginxClientMaxBodySize
-        NginxProxyCpu: !Ref NginxProxyCpu
-        NginxProxyMemory: !Ref NginxProxyMemory
-        NginxContainerName: !Ref NginxContainerName
-        NginxContainerPort: !Ref NginxContainerPort
   SecurityGroupInALB:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Properties:
@@ -286,7 +191,8 @@ Resources:
       HealthyThresholdCount: !Ref HealthCheckHealthyThreshold
       Matcher:
         HttpCode: !Ref HealthCheckSuccessCode
-      Port: !Ref NginxContainerPort
+      Port:
+        'Fn::ImportValue': !Sub '${ParentTaskStack}-NginxContainerPort'
       Protocol: !Ref HealthCheckProtocol
       UnhealthyThresholdCount: !Ref HealthCheckUnhealthyThreshold
       VpcId:
@@ -405,7 +311,7 @@ Resources:
         'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-HttpListener'
       Priority: !Ref LoadBalancerPriority
   LoadBalancerHttpsListenerRule:
-    Condition: HasNginxEnforceHttps
+    Condition: HasLoadBalancerListenHttps
     Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
     Properties:
       Actions:
@@ -457,8 +363,10 @@ Resources:
         MinimumHealthyPercent: !Ref DeployMinPercent
       DesiredCount: !Ref DesiredCount
       LoadBalancers:
-      - ContainerName: !Ref NginxContainerName
-        ContainerPort: !Ref NginxContainerPort
+      - ContainerName:
+          'Fn::ImportValue': !Sub '${ParentTaskStack}-NginxContainerName'
+        ContainerPort:
+          'Fn::ImportValue': !Sub '${ParentTaskStack}-NginxContainerPort'
         TargetGroupArn: !Ref LoadBalancerTargetGroup
       PlacementStrategies:
       - Type: spread
@@ -466,7 +374,8 @@ Resources:
       - Type: spread
         Field: instanceId
       Role: !GetAtt 'ServiceRole.Arn'
-      TaskDefinition: !GetAtt 'TaskDefinition.Outputs.Arn'
+      TaskDefinition:
+        'Fn::ImportValue': !Sub '${ParentTaskStack}-TaskDefinition'
   ScalableTargetRole: # based on http://docs.aws.amazon.com/AmazonECS/latest/developerguide/autoscale_IAM_role.html
     Type: 'AWS::IAM::Role'
     Properties:
