@@ -101,6 +101,10 @@ Conditions:
 Resources:
   TaskBucket:
     Type: AWS::S3::Bucket
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref AppRepo
   CloudwatchLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -267,71 +271,11 @@ Outputs:
     Value: !Ref TaskBucket
     Export: 
       Name: !Sub '${AWS::StackName}-TaskBucket'
-  TaskDefinition:
-    Value: !Ref TaskDefinition
-    Export:
-      Name: !Sub '${AWS::StackName}-TaskDefinition'
-  TaskRole:
-    Value: !Ref TaskRole
-    Export:
-      Name: !Sub '${AWS::StackName}-TaskRole'
-  AppType:
-    Value: !Ref AppType
-    Export:
-      Name: !Sub '${AWS::StackName}-AppType'
-  AppRepo:
+  Repository:
     Value: !Ref AppRepo
     Export:
       Name: !Sub '${AWS::StackName}-AppRepo'
-  AppEnv:
-    Value: !Ref AppEnv
+  Arn:
+    Value: !Ref TaskDefinition
     Export:
-      Name: !Sub '${AWS::StackName}-AppEnv'
-  AppName:
-    Value: !Ref AppName
-    Export:
-      Name: !Sub '${AWS::StackName}-AppName'
-  AppTag:
-    Value: !Ref AppTag
-    Export:
-      Name: !Sub '${AWS::StackName}-AppTag'
-  AppPort:
-    Value: !Ref AppPort
-    Export:
-      Name: !Sub '${AWS::StackName}-AppPort'
-  AppCpu:
-    Value: !Ref AppCpu
-    Export:
-      Name: !Sub '${AWS::StackName}-AppCpu'
-  AppMemory:
-    Value: !Ref AppMemory
-    Export:
-      Name: !Sub '${AWS::StackName}-AppMemory'
-  NginxServerName:
-    Value: !Ref NginxServerName
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxServerName'
-  NginxEnforceHttps:
-    Value: !Ref NginxEnforceHttps
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxEnforceHttps'
-  NginxClientMaxBodySize:
-    Value: !Ref NginxClientMaxBodySize
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxClientMaxBodySize'
-  NginxProxyCpu:
-    Value: !Ref NginxProxyCpu
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxProxyCpu'
-  NginxProxyMemory:
-    Value: !Ref NginxProxyMemory
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxProxyMemory'
-  NginxContainerName:
-    Value: !Ref NginxContainerName
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxContainerName'
-  NginxContainerPort:
-    Value: !Ref NginxContainerPort
-    Export:
-      Name: !Sub '${AWS::StackName}-NginxContainerPort'
+      Name: !Sub '${AWS::StackName}-Arn'
