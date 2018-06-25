@@ -7,34 +7,39 @@ Metadata:
     - Label:
         default: 'Application Parameters'
       Parameters:
-      - AppType
+      - AppHostPattern
       - AppRepo
+      - AppCommand
       - AppEnv
       - AppName
       - AppTag
       - AppPort
       - AppCpu
       - AppMemory
+      - AppForceHttps
     - Label:
         default: 'Nginx Proxy Parameters'
       Parameters:
-      - NginxServerName
-      - NginxEnforceHttps
+      - NginxProxy
       - NginxClientMaxBodySize
       - NginxProxyCpu
       - NginxProxyMemory
       - NginxContainerName
       - NginxContainerPort
 Parameters:
-  AppType:
+  AppHostPattern:
+    Description: 'Optional host pattern'
     Type: String
-    Description: Type of this application
-    AllowedValues:
-      - basic
-      - rails
+    Default: ''
+    ConstraintDescription: 'Must not be longer than 255'
+    MaxLength: 255
   AppRepo:
     Type: String
     Description: The slug for the GitHub repository that will deploy to this service
+  AppCommand:
+    Type: String
+    Default: ''
+    Description: Optional custom docker command to run for this service
   AppEnv:
     Type: String
     Default: development
@@ -63,21 +68,24 @@ Parameters:
     Type: Number
     Default: 128
     Description: The amount of memory to allocate to nginx proxy
-  NginxEnforceHttps:
+  AppForceHttps:
     Type: String
-    Default: false
+    Default: 'yes'
     AllowedValues:
-    - true
-    - false
+    - 'yes'
+    - 'no'
     Description: Redirect all HTTP traffic to HTTPS
+  NginxProxy:
+    Type: String
+    Default: 'yes'
+    Description: Include nginx proxy in front of ecs task?
+    AllowedValues:
+    - 'yes'
+    - 'no'
   NginxClientMaxBodySize:
     Type: String
     Default: '1m'
     Description: Max upload file size (0 for disabled) (http://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size)
-  NginxServerName:
-    Type: String
-    Default: '_'
-    Description: The nginx server name to listen to (defaults to "_", all server names)
   NginxProxyCpu:
     Type: Number
     Default: 64
@@ -95,9 +103,11 @@ Parameters:
     Description: The port that the nginx proxy is running on
 Mappings: {}
 Conditions:
-  HasNginxEnforceHttps: !Equals [!Ref NginxEnforceHttps, 'true']
-  HasAppTypeBasic: !Equals [!Ref AppType, 'basic']
-  HasAppTypeRails: !Equals [!Ref AppType, 'rails']
+  HasAppHostPattern: !Not [!Equals [!Ref AppHostPattern, '']]
+  HasNginxProxy: !Equals [!Ref NginxProxy, 'yes']
+  HasNotNginxProxy: !Not [!Condition HasNginxProxy]
+  HasAppForceHttps: !Equals [!Ref AppForceHttps, 'yes']
+  HasAppCommand: !Not [!Equals [!Ref AppCommand, '']]
 Resources:
   TaskBucket:
     Type: AWS::S3::Bucket
@@ -135,54 +145,35 @@ Resources:
     Properties:
       Family: !Ref AWS::StackName
       TaskRoleArn: !GetAtt 'TaskRole.Arn'
-      ContainerDefinitions:
-        - Name: !Ref NginxContainerName
-          Image: cmr1/nginx-proxy
-          Essential: true
-          Cpu: !Ref NginxProxyCpu
-          Memory: !Ref NginxProxyMemory
-          Links:
-            - !Sub "${AppName}:${AppName}"
-          PortMappings:
-            - ContainerPort: !Ref NginxContainerPort
-              HostPort: 0
-          VolumesFrom:
-            - SourceContainer: !Ref AppName
-          Environment:
-            - Name: CLIENT_MAX_BODY_SIZE
-              Value: !Ref NginxClientMaxBodySize
-            - Name: SERVER_NAME
-              Value: !Ref NginxServerName
-            - Name: SERVER_BACKENDS
-              Value: !Sub "/:${AppName}:${AppPort}"
-            - Name: SERVER_TYPE
-              Value: !If
-                - HasNginxEnforceHttps
-                - "elb"
-                - "http"
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref CloudwatchLogsGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: !Ref AWS::StackName
+      ContainerDefinitions: 
         - Name: !Ref AppName
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
           Essential: true
           Cpu: !Ref AppCpu
           Memory: !Ref AppMemory
+          Command: !If
+            - HasAppCommand
+            - !Split
+              - ' '
+              - !Ref AppCommand
+            - !Ref 'AWS::NoValue'
           Environment:
+            - Name: RAILS_ENV
+              Value: !Ref AppEnv
             - Name: APP_ENV
               Value: !Ref AppEnv
             - Name: AWS_BUCKET_NAME
               Value: !Ref TaskBucket
             - Name: AWS_REGION
               Value: !Ref 'AWS::Region'
-            - Name: APP_HOST
-              Value: !Ref NginxServerName
+            - !If
+              - HasAppHostPattern
+              - Name: APP_HOST
+                Value: !Ref AppHostPattern
+              - !Ref 'AWS::NoValue'
             - Name: APP_PROTOCOL
               Value: !If
-                - HasNginxEnforceHttps
+                - HasAppForceHttps
                 - "https://"
                 - "http://"
           LogConfiguration:
@@ -191,81 +182,117 @@ Resources:
               awslogs-group: !Ref CloudwatchLogsGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: !Ref AWS::StackName
+        - !If
+          - HasNotNginxProxy
+          - !Ref 'AWS::NoValue'
+          - Name: !Ref NginxContainerName
+            Image: cmr1/nginx-proxy
+            Essential: true
+            Cpu: !Ref NginxProxyCpu
+            Memory: !Ref NginxProxyMemory
+            Links:
+              - !Sub "${AppName}:${AppName}"
+            PortMappings:
+              - ContainerPort: !Ref NginxContainerPort
+                HostPort: 0
+            VolumesFrom:
+              - SourceContainer: !Ref AppName
+            Environment:
+              - Name: CLIENT_MAX_BODY_SIZE
+                Value: !Ref NginxClientMaxBodySize
+              - Name: SERVER_NAME
+                Value: !If
+                  - HasAppHostPattern
+                  - !Ref AppHostPattern
+                  - '_'
+              - Name: SERVER_BACKENDS
+                Value: !Sub "/:${AppName}:${AppPort}"
+              - Name: SERVER_TYPE
+                Value: !If
+                  - HasAppForceHttps
+                  - "elb"
+                  - "http"
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref CloudwatchLogsGroup
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: !Ref AWS::StackName
 
-  DBResetTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Condition: HasAppTypeRails
-    Properties:
-      Family: !Sub ${AWS::StackName}-db-reset
-      TaskRoleArn: !GetAtt 'TaskRole.Arn'
-      ContainerDefinitions:
-        - Name: !Ref AppName
-          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
-          Cpu: !Ref AppCpu
-          Memory: !Ref AppMemory
-          Command:
-            - bundle
-            - exec
-            - rake 
-            - db:reset
-          Environment:
-            - Name: APP_ENV
-              Value: !Ref AppEnv
-            - Name: AWS_BUCKET_NAME
-              Value: !Ref TaskBucket
-            - Name: AWS_REGION
-              Value: !Ref 'AWS::Region'
-            - Name: APP_HOST
-              Value: !Ref NginxServerName
-            - Name: APP_PROTOCOL
-              Value: !If
-                - HasNginxEnforceHttps
-                - "https://"
-                - "http://"
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref CloudwatchLogsGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: !Ref AWS::StackName
+  # DBResetTaskDefinition:
+  #   Type: AWS::ECS::TaskDefinition
+  #   Condition: HasAppTypeRails
+  #   Properties:
+  #     Family: !Sub ${AWS::StackName}-db-reset
+  #     TaskRoleArn: !GetAtt 'TaskRole.Arn'
+  #     ContainerDefinitions:
+  #       - Name: !Ref AppName
+  #         Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
+  #         Cpu: !Ref AppCpu
+  #         Memory: !Ref AppMemory
+  #         Command:
+  #           - bundle
+  #           - exec
+  #           - rake 
+  #           - db:reset
+  #         Environment:
+  #           - Name: APP_ENV
+  #             Value: !Ref AppEnv
+  #           - Name: AWS_BUCKET_NAME
+  #             Value: !Ref TaskBucket
+  #           - Name: AWS_REGION
+  #             Value: !Ref 'AWS::Region'
+  #           - Name: APP_HOST
+  #             Value: !Ref NginxServerName
+  #           - Name: APP_PROTOCOL
+  #             Value: !If
+  #               - HasAppForceHttps
+  #               - "https://"
+  #               - "http://"
+  #         LogConfiguration:
+  #           LogDriver: awslogs
+  #           Options:
+  #             awslogs-group: !Ref CloudwatchLogsGroup
+  #             awslogs-region: !Ref AWS::Region
+  #             awslogs-stream-prefix: !Ref AWS::StackName
 
-  DBMigrateTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Condition: HasAppTypeRails
-    Properties:
-      Family: !Sub ${AWS::StackName}-db-migrate
-      TaskRoleArn: !GetAtt 'TaskRole.Arn'
-      ContainerDefinitions:
-        - Name: !Ref AppName
-          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
-          Essential: true
-          Cpu: !Ref AppCpu
-          Memory: !Ref AppMemory
-          Command:
-            - bundle
-            - exec
-            - rake 
-            - db:migrate
-          Environment:
-            - Name: APP_ENV
-              Value: !Ref AppEnv
-            - Name: AWS_BUCKET_NAME
-              Value: !Ref TaskBucket
-            - Name: AWS_REGION
-              Value: !Ref 'AWS::Region'
-            - Name: APP_HOST
-              Value: !Ref NginxServerName
-            - Name: APP_PROTOCOL
-              Value: !If
-                - HasNginxEnforceHttps
-                - "https://"
-                - "http://"
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref CloudwatchLogsGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: !Ref AWS::StackName
+  # DBMigrateTaskDefinition:
+  #   Type: AWS::ECS::TaskDefinition
+  #   Condition: HasAppTypeRails
+  #   Properties:
+  #     Family: !Sub ${AWS::StackName}-db-migrate
+  #     TaskRoleArn: !GetAtt 'TaskRole.Arn'
+  #     ContainerDefinitions:
+  #       - Name: !Ref AppName
+  #         Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
+  #         Essential: true
+  #         Cpu: !Ref AppCpu
+  #         Memory: !Ref AppMemory
+  #         Command:
+  #           - bundle
+  #           - exec
+  #           - rake 
+  #           - db:migrate
+  #         Environment:
+  #           - Name: APP_ENV
+  #             Value: !Ref AppEnv
+  #           - Name: AWS_BUCKET_NAME
+  #             Value: !Ref TaskBucket
+  #           - Name: AWS_REGION
+  #             Value: !Ref 'AWS::Region'
+  #           - Name: APP_HOST
+  #             Value: !Ref NginxServerName
+  #           - Name: APP_PROTOCOL
+  #             Value: !If
+  #               - HasAppForceHttps
+  #               - "https://"
+  #               - "http://"
+  #         LogConfiguration:
+  #           LogDriver: awslogs
+  #           Options:
+  #             awslogs-group: !Ref CloudwatchLogsGroup
+  #             awslogs-region: !Ref AWS::Region
+  #             awslogs-stream-prefix: !Ref AWS::StackName
 Outputs:
   TaskBucket:
     Value: !Ref TaskBucket
@@ -279,10 +306,11 @@ Outputs:
     Value: !Ref TaskRole
     Export:
       Name: !Sub '${AWS::StackName}-TaskRole'
-  AppType:
-    Value: !Ref AppType
+  AppCommand:
+    Condition: HasAppCommand
+    Value: !Ref AppCommand
     Export:
-      Name: !Sub '${AWS::StackName}-AppType'
+      Name: !Sub '${AWS::StackName}-AppCommand'
   AppRepo:
     Value: !Ref AppRepo
     Export:
@@ -311,14 +339,14 @@ Outputs:
     Value: !Ref AppMemory
     Export:
       Name: !Sub '${AWS::StackName}-AppMemory'
-  NginxServerName:
-    Value: !Ref NginxServerName
+  AppForceHttps:
+    Value: !Ref AppForceHttps
     Export:
-      Name: !Sub '${AWS::StackName}-NginxServerName'
-  NginxEnforceHttps:
-    Value: !Ref NginxEnforceHttps
+      Name: !Sub '${AWS::StackName}-AppForceHttps'
+  AppHostPattern:
+    Value: !Ref AppHostPattern
     Export:
-      Name: !Sub '${AWS::StackName}-NginxEnforceHttps'
+      Name: !Sub '${AWS::StackName}-AppHostPattern'
   NginxClientMaxBodySize:
     Value: !Ref NginxClientMaxBodySize
     Export:
