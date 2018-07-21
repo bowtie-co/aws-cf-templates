@@ -43,7 +43,7 @@ Parameters:
   AppEnv:
     Type: String
     Default: development
-    AllowedValues: 
+    AllowedValues:
       - development
       - staging
       - production
@@ -145,7 +145,7 @@ Resources:
     Properties:
       Family: !Ref AWS::StackName
       TaskRoleArn: !GetAtt 'TaskRole.Arn'
-      ContainerDefinitions: 
+      ContainerDefinitions:
         - Name: !Ref AppName
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AppRepo}:${AppTag}
           Essential: true

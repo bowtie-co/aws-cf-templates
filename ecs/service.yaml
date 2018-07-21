@@ -9,7 +9,6 @@ Metadata:
       Parameters:
       - ParentClusterStack
       - ParentLoadBalancerStack
-      - ParentAuthProxyStack
       - ParentAlertStack
     - Label:
         default: 'Load Balancer Parameters'
@@ -21,11 +20,11 @@ Metadata:
     - Label:
         default: 'Application Parameters'
       Parameters:
-      - AppRepo
+      - Image
+      - Tag
       - AppCommand
       - AppEnv
       - AppName
-      - Tag
       - AppPort
       - AppCpu
       - AppMemory
@@ -69,10 +68,6 @@ Parameters:
   ParentLoadBalancerStack:
     Description: 'Optional stack name of parent Load Balancer stack based on ec2/alb.yaml template.'
     Type: String
-  ParentAuthProxyStack:
-    Description: 'Optional stack name of parent auth proxy stack based on security/auth-proxy-*.yaml template.'
-    Type: String
-    Default: ''
   ParentAlertStack:
     Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
     Type: String
@@ -178,9 +173,13 @@ Parameters:
     Default: 50
     MinValue: 0
     MaxValue: 100
-  AppRepo:
+  Image:
     Type: String
-    Description: The slug for the GitHub repository that will deploy to this service
+    Description: The docker image for this service
+  Tag:
+    Type: String
+    Default: latest
+    Description: Tag to deploy for this service
   AppCommand:
     Type: String
     Default: ''
@@ -188,7 +187,7 @@ Parameters:
   AppEnv:
     Type: String
     Default: development
-    AllowedValues: 
+    AllowedValues:
       - development
       - staging
       - production
@@ -197,10 +196,6 @@ Parameters:
     Type: String
     Default: app
     Description: Application name (used as container name, needs to match docker directory for nginx to handle assets)
-  Tag:
-    Type: String
-    Default: latest
-    Description: Tag to deploy for this service (docker tag on ECR)
   AppPort:
     Type: Number
     Default: 3000
@@ -249,44 +244,162 @@ Parameters:
 Mappings: {}
 Conditions:
   HasLoadBalancer: !Not [!Equals [!Ref ParentLoadBalancerStack, '']]
-  HasAuthProxySecurityGroup: !Not [!Equals [!Ref ParentAuthProxyStack, '']]
-  HasNotAuthProxySecurityGroup: !Equals [!Ref ParentAuthProxyStack, '']
   HasLoadBalancerPath: !Not [!Equals [!Ref LoadBalancerPath, '']]
   HasLoadBalancerHostPattern: !Not [!Equals [!Ref LoadBalancerHostPattern, '']]
   HasNginxProxy: !Equals [!Ref NginxProxy, 'yes']
+  HasNotNginxProxy: !Not [!Condition HasNginxProxy]
   HasAppForceHttps: !Equals [!Ref AppForceHttps, 'yes']
+  HasAppCommand: !Not [!Equals [!Ref AppCommand, '']]
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
   HasAlertTopicAndLoadBalancer: !And [!Condition HasLoadBalancer, !Condition HasAlertTopic]
   HasAppForceHttpsAndLoadBalancer: !And [!Condition HasLoadBalancer, !Condition HasAppForceHttps]
 Resources:
-  TaskDefinition:
-    Type: 'AWS::CloudFormation::Stack'
+  ServiceBucket:
+    Type: AWS::S3::Bucket
+  CloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
     Properties:
-      TemplateURL: https://s3.us-east-1.amazonaws.com/bt-aws-cf-playground/ecs/task-definition.yaml
-      Parameters:
-        AppRepo: !Ref AppRepo
-        AppCommand: !Ref AppCommand
-        AppEnv: !Ref AppEnv
-        AppName: !Ref AppName
-        AppTag: !Ref Tag
-        AppPort: !Ref AppPort
-        AppCpu: !Ref AppCpu
-        AppMemory: !Ref AppMemory
-        AppForceHttps: !Ref AppForceHttps
-        AppHostPattern: !If
-          - HasLoadBalancerHostPattern
-          - !Ref LoadBalancerHostPattern
-          - !If
-            - HasLoadBalancer
-            -
-              'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-DNSName'
+      LogGroupName: !Ref AWS::StackName
+  TaskRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs-tasks.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:*'
+            Resource:
+            - !Sub 'arn:aws:s3:::${ServiceBucket}'
+            - !Sub 'arn:aws:s3:::${ServiceBucket}/*'
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${Image}:${Tag}
+          Essential: true
+          Cpu: !Ref AppCpu
+          Memory: !Ref AppMemory
+          Command: !If
+            - HasAppCommand
+            - !Split
+              - ' '
+              - !Ref AppCommand
             - !Ref 'AWS::NoValue'
-        NginxClientMaxBodySize: !Ref NginxClientMaxBodySize
-        NginxProxy: !Ref NginxProxy
-        NginxProxyCpu: !Ref NginxProxyCpu
-        NginxProxyMemory: !Ref NginxProxyMemory
-        NginxContainerName: !Ref NginxContainerName
-        NginxContainerPort: !Ref NginxContainerPort
+          PortMappings: !If
+            - HasNotNginxProxy
+            - - ContainerPort: !Ref AppPort
+                HostPort: 0
+            - !Ref 'AWS::NoValue'
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref AppEnv
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref ServiceBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - !If
+              - HasLoadBalancerHostPattern
+              - Name: APP_HOST
+                Value: !Ref LoadBalancerHostPattern
+              - !If
+                - HasLoadBalancer
+                - Name: APP_HOST
+                  Value:
+                    'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-DNSName'
+                - !Ref 'AWS::NoValue'
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasAppForceHttps
+                - "https://"
+                - "http://"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+        - !If
+          - HasNotNginxProxy
+          - !Ref 'AWS::NoValue'
+          - Name: !Ref NginxContainerName
+            Image: cmr1/nginx-proxy
+            Essential: true
+            Cpu: !Ref NginxProxyCpu
+            Memory: !Ref NginxProxyMemory
+            Links:
+              - !Sub "${AppName}:${AppName}"
+            PortMappings:
+              - ContainerPort: !Ref NginxContainerPort
+                HostPort: 0
+            VolumesFrom:
+              - SourceContainer: !Ref AppName
+            Environment:
+              - Name: CLIENT_MAX_BODY_SIZE
+                Value: !Ref NginxClientMaxBodySize
+              - !If
+                - HasLoadBalancerHostPattern
+                - Name: SERVER_NAME
+                  Value: !Ref LoadBalancerHostPattern
+                - !If
+                  - HasLoadBalancer
+                  - Name: SERVER_NAME
+                    Value:
+                      'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-DNSName'
+                  - !Ref 'AWS::NoValue'
+              - Name: SERVER_BACKENDS
+                Value: !Sub "/:${AppName}:${AppPort}"
+              - Name: SERVER_TYPE
+                Value: !If
+                  - HasAppForceHttps
+                  - "elb"
+                  - "http"
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref CloudwatchLogsGroup
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: !Ref AWS::StackName
+  # TaskDefinition:
+  #   Type: 'AWS::CloudFormation::Stack'
+  #   Properties:
+  #     TemplateURL: https://s3.us-east-1.amazonaws.com/bt-aws-cf-playground/ecs/task-definition.yaml
+  #     Parameters:
+  #       AppRepo: !Ref AppRepo
+  #       AppCommand: !Ref AppCommand
+  #       AppEnv: !Ref AppEnv
+  #       AppName: !Ref AppName
+  #       AppTag: !Ref Tag
+  #       AppPort: !Ref AppPort
+  #       AppCpu: !Ref AppCpu
+  #       AppMemory: !Ref AppMemory
+  #       AppForceHttps: !Ref AppForceHttps
+  #       AppHostPattern: !If
+  #         - HasLoadBalancerHostPattern
+  #         - !Ref LoadBalancerHostPattern
+  #         - !If
+  #           - HasLoadBalancer
+  #           -
+  #             'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-DNSName'
+  #           - !Ref 'AWS::NoValue'
+  #       NginxClientMaxBodySize: !Ref NginxClientMaxBodySize
+  #       NginxProxy: !Ref NginxProxy
+  #       NginxProxyCpu: !Ref NginxProxyCpu
+  #       NginxProxyMemory: !Ref NginxProxyMemory
+  #       NginxContainerName: !Ref NginxContainerName
+  #       NginxContainerPort: !Ref NginxContainerPort
   SecurityGroupInALB:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasLoadBalancer
@@ -319,31 +432,11 @@ Resources:
       TargetGroupAttributes:
       - Key: deregistration_delay.timeout_seconds
         Value: !Ref LoadBalancerDeregistrationDelay
-  HTTPCodeELB5XXTooHighAlarm:
-    Condition: HasAlertTopicAndLoadBalancer
-    Type: 'AWS::CloudWatch::Alarm'
-    Properties:
-      AlarmDescription: 'Application load balancer returns 5XX HTTP status codes'
-      Namespace: 'AWS/ApplicationELB'
-      MetricName: HTTPCode_ELB_5XX_Count
-      Statistic: Sum
-      Period: 60
-      EvaluationPeriods: 1
-      ComparisonOperator: GreaterThanThreshold
-      Threshold: 0
-      AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
-      Dimensions:
-      - Name: LoadBalancer
-        Value:
-          'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-FullName'
-      - Name: TargetGroup
-        Value: !GetAtt LoadBalancerTargetGroup.TargetGroupFullName
   HTTPCodeTarget5XXTooHighAlarm:
     Condition: HasAlertTopicAndLoadBalancer
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer receives 5XX HTTP status codes from targets'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer receives 5XX HTTP status codes from targets'
       Namespace: 'AWS/ApplicationELB'
       MetricName: HTTPCode_Target_5XX_Count
       Statistic: Sum
@@ -363,7 +456,7 @@ Resources:
     Condition: HasAlertTopicAndLoadBalancer
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer rejected connections because the load balancer had reached its maximum number of connections'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer rejected connections because the load balancer had reached its maximum number of connections'
       Namespace: 'AWS/ApplicationELB'
       MetricName: RejectedConnectionCount
       Statistic: Sum
@@ -383,7 +476,7 @@ Resources:
     Condition: HasAlertTopicAndLoadBalancer
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer could not connect to targets'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer could not connect to targets'
       Namespace: 'AWS/ApplicationELB'
       MetricName: TargetConnectionErrorCount
       Statistic: Sum
@@ -425,7 +518,7 @@ Resources:
             Values:
             - !Ref LoadBalancerHostPattern
         - - Field: path-pattern
-            Values: 
+            Values:
               - '*'
       ListenerArn:
         'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-HttpListener'
@@ -456,7 +549,7 @@ Resources:
             Values:
             - !Ref LoadBalancerHostPattern
         - - Field: path-pattern
-            Values: 
+            Values:
               - '*'
       ListenerArn:
         'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-HttpsListener'
@@ -489,9 +582,14 @@ Resources:
       - !Ref 'AWS::NoValue'
       LoadBalancers: !If
       - HasLoadBalancer
-      - ContainerName: !Ref NginxContainerName
-        ContainerPort: !Ref NginxContainerPort
-        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      - !If
+        - HasNginxProxy
+        - - ContainerName: !Ref NginxContainerName
+            ContainerPort: !Ref NginxContainerPort
+            TargetGroupArn: !Ref LoadBalancerTargetGroup
+        - - ContainerName: !Ref AppName
+            ContainerPort: !Ref AppPort
+            TargetGroupArn: !Ref LoadBalancerTargetGroup
       - !Ref 'AWS::NoValue'
       PlacementStrategies:
       - Type: spread
@@ -502,7 +600,8 @@ Resources:
       - HasLoadBalancer
       - !GetAtt 'ServiceRole.Arn'
       - !Ref 'AWS::NoValue'
-      TaskDefinition: !GetAtt 'TaskDefinition.Outputs.TaskDefinition'
+      TaskDefinition: !Ref TaskDefinition
+      # TaskDefinition: !Ref 'TaskDefinition.Outputs.TaskDefinition'
   ScalableTargetRole: # based on http://docs.aws.amazon.com/AmazonECS/latest/developerguide/autoscale_IAM_role.html
     Type: 'AWS::IAM::Role'
     Properties:
@@ -575,7 +674,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Average CPU utilization over last 10 minutes higher than 80%'
+      AlarmDescription: !Sub '${AWS::StackName} - Average CPU utilization over last 10 minutes higher than 80%'
       Namespace: 'AWS/ECS'
       Dimensions:
       - Name: ClusterName
@@ -594,7 +693,7 @@ Resources:
   CPUUtilizationHighAlarm:
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Service is running out of CPU'
+      AlarmDescription: !Sub '${AWS::StackName} - Service is running out of CPU'
       Namespace: 'AWS/ECS'
       Dimensions:
       - Name: ClusterName
@@ -613,7 +712,7 @@ Resources:
   CPUUtilizationLowAlarm:
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Service is wasting CPU'
+      AlarmDescription: !Sub '${AWS::StackName} - Service is wasting CPU'
       Namespace: 'AWS/ECS'
       Dimensions:
       - Name: ClusterName
@@ -633,7 +732,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Average memory utilization over last 10 minutes higher than 80%'
+      AlarmDescription: !Sub '${AWS::StackName} - Average memory utilization over last 10 minutes higher than 80%'
       Namespace: 'AWS/ECS'
       Dimensions:
       - Name: ClusterName
@@ -652,7 +751,7 @@ Resources:
   MemoryUtilizationHighAlarm:
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Service is running out of memory'
+      AlarmDescription: !Sub '${AWS::StackName} - Service is running out of memory'
       Namespace: 'AWS/ECS'
       Dimensions:
       - Name: ClusterName
@@ -671,7 +770,7 @@ Resources:
   MemoryUtilizationLowAlarm:
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Service is wasting memory'
+      AlarmDescription: !Sub '${AWS::StackName} - Service is wasting memory'
       Namespace: 'AWS/ECS'
       Dimensions:
       - Name: ClusterName
@@ -697,3 +796,8 @@ Outputs:
   StackName:
     Description: 'Stack name.'
     Value: !Sub '${AWS::StackName}'
+  TargetGroup:
+    Description: 'Target Group'
+    Value: !Ref LoadBalancerTargetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-TargetGroup'

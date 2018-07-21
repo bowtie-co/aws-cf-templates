@@ -9,6 +9,7 @@ Metadata:
       Parameters:
       - ParentVPCStack
       - ParentAlertStack
+      - ParentDefaultServiceStack
     - Label:
         default: 'Load Balancer Parameters'
       Parameters:
@@ -20,6 +21,10 @@ Parameters:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
     Type: String
   ParentAlertStack:
+    Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
+    Type: String
+    Default: ''
+  ParentDefaultServiceStack:
     Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
     Type: String
     Default: ''
@@ -47,6 +52,7 @@ Conditions:
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
   HasSchemeInternal: !Equals [!Ref Scheme, 'internal']
   HasCertificateArn: !Not [!Equals [!Ref CertificateArn, '']]
+  HasDefaultService: !Not [!Equals [!Ref ParentDefaultServiceStack, '']]
 Resources:
   SecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
@@ -93,8 +99,12 @@ Resources:
     Type: 'AWS::ElasticLoadBalancingV2::Listener'
     Properties:
       DefaultActions:
-      - TargetGroupArn: !Ref DefaultTargetGroup
-        Type: forward
+      - Type: forward
+        TargetGroupArn: !If
+        - HasDefaultService
+        -
+          'Fn::ImportValue': !Sub '${ParentDefaultServiceStack}-TargetGroup'
+        - !Ref DefaultTargetGroup
       LoadBalancerArn: !Ref LoadBalancer
       Port: 80
       Protocol: HTTP
@@ -105,8 +115,12 @@ Resources:
       Certificates:
       - CertificateArn: !Ref CertificateArn
       DefaultActions:
-      - TargetGroupArn: !Ref DefaultTargetGroup
-        Type: forward
+      - Type: forward
+        TargetGroupArn: !If
+        - HasDefaultService
+        -
+          'Fn::ImportValue': !Sub '${ParentDefaultServiceStack}-TargetGroup'
+        - !Ref DefaultTargetGroup
       LoadBalancerArn: !Ref LoadBalancer
       Port: 443
       Protocol: HTTPS
@@ -131,7 +145,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer returns 5XX HTTP status codes'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer returns 5XX HTTP status codes'
       Namespace: 'AWS/ApplicationELB'
       MetricName: HTTPCode_ELB_5XX_Count
       Statistic: Sum
@@ -148,7 +162,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer receives 5XX HTTP status codes from targets'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer receives 5XX HTTP status codes from targets'
       Namespace: 'AWS/ApplicationELB'
       MetricName: HTTPCode_Target_5XX_Count
       Statistic: Sum
@@ -165,7 +179,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer rejected connections because the load balancer had reached its maximum number of connections'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer rejected connections because the load balancer had reached its maximum number of connections'
       Namespace: 'AWS/ApplicationELB'
       MetricName: RejectedConnectionCount
       Statistic: Sum
@@ -182,7 +196,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'Application load balancer could not connect to targets'
+      AlarmDescription: !Sub '${AWS::StackName} - Application load balancer could not connect to targets'
       Namespace: 'AWS/ApplicationELB'
       MetricName: TargetConnectionErrorCount
       Statistic: Sum
