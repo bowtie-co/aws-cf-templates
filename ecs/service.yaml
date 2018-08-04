@@ -29,6 +29,7 @@ Metadata:
       - AppCpu
       - AppMemory
       - AppForceHttps
+      - AppPrivileged
     - Label:
         default: 'Nginx Proxy Parameters'
       Parameters:
@@ -215,6 +216,11 @@ Parameters:
     - 'yes'
     - 'no'
     Description: Redirect all HTTP requests to HTTPS
+  AppPrivileged:
+    Type: String
+    Default: false
+    AllowedValues: [ true, false ]
+    Description: Give app container privileged access (i.e. for dind usage)
   NginxProxy:
     Type: String
     Default: 'yes'
@@ -292,6 +298,7 @@ Resources:
           Essential: true
           Cpu: !Ref AppCpu
           Memory: !Ref AppMemory
+          Privileged: !Ref AppPrivileged
           Command: !If
             - HasAppCommand
             - !Split
