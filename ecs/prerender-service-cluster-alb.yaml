@@ -68,7 +68,7 @@ Parameters:
     Type: String
     Default: ''
   NumWorkers:
-    Description: 'The number of Prerender workers that you'd like to start. (recommended 1 per CPU)'
+    Description: 'The number of Prerender workers that you would like to start. (recommended 1 per CPU)'
     Type: Number
     Default: 1
   NumIterations:
