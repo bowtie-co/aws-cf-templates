@@ -8,6 +8,7 @@ Metadata:
         default: 'Parent Stacks'
       Parameters:
       - ParentVPCStack
+      - ParentEFSStack
       - ParentSSHBastionStack
       - ParentClientStack
       - ParentAlertStack
@@ -35,6 +36,9 @@ Metadata:
       - ContainerExcessThreshold
 Parameters:
   ParentVPCStack:
+    Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
+    Type: String
+  ParentEFSStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
     Type: String
   ParentSSHBastionStack:
@@ -314,7 +318,7 @@ Resources:
     Metadata:
       'AWS::CloudFormation::Init':
         configSets:
-          default: !If [HasIAMUserSSHAccess, [awslogs, ssh-access, install], [awslogs, install]]
+          default: !If [HasIAMUserSSHAccess, [awslogs, ssh-access, install, mount], [awslogs, install, mount]]
         awslogs:
           packages:
             yum:
@@ -471,6 +475,7 @@ Resources:
           packages:
             yum:
               ruby: []
+              nfs-utils: []
             rubygems:
               'aws-sdk':
               - '3.0.1'
@@ -675,6 +680,15 @@ Resources:
                 - '/opt/lifecycle-poller/poller.conf'
                 - '/opt/lifecycle-poller/daemon.rb'
                 - '/opt/lifecycle-poller/worker.rb'
+        mount:
+          commands:
+            01_make_mount_dir:
+              command: mkdir /efs
+            02_mount_efs_dir:
+              command: !Sub
+                - 'mount -t nfs4 -o nfsvers=4.1 ${FileSystem}.efs.${AWS::Region}.amazonaws.com:/ /efs'
+                - FileSystem:
+                    'Fn::ImportValue': !Sub '${ParentEFSStack}-FileSystem'
     Properties:
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', ECSAMI]
       IamInstanceProfile: !Ref InstanceProfile

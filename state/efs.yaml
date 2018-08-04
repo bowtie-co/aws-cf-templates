@@ -1,0 +1,136 @@
+---
+# Copyright 2018 widdix GmbH
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'State: RDS, a cloudonaut.io template, sponsored by https://github.com/ngault'
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentVPCStack
+      - ParentClientStack
+      - ParentAlertStack
+    - Label:
+        default: 'EFS Parameters'
+      Parameters:
+      - VolumeName
+      - AZCount
+Parameters:
+  ParentVPCStack:
+    Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
+    Type: String
+  ParentClientStack:
+    Description: 'Stack name of parent client stack based on state/client-sg.yaml template.'
+    Type: String
+  ParentAlertStack:
+    Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
+    Type: String
+    Default: ''
+  VolumeName:
+    Description: 'EFS Volume Name'
+    Type: String
+  AZCount:
+    Description: 'Number of AZs included in vpc/vpc-*azs template'
+    Type: Number
+    AllowedValues: [2, 3, 4]
+Conditions:
+  HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+  HasClientStack: !Not [!Equals [!Ref ParentClientStack, '']]
+  HasNotClientStack: !Not [!Condition HasClientStack]
+  Has2AZs: !Equals [!Ref AZCount, 2]
+  Has3AZs: !Equals [!Ref AZCount, 3]
+  Has4AZs: !Equals [!Ref AZCount, 4]
+  HasMountC: !Or [!Condition Has3AZs, !Condition Has4AZs]
+  HasMountD: !Condition Has4AZs
+Resources:
+  MountTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      GroupDescription: Security group for mount target
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '2049'
+        ToPort: '2049'
+        SourceSecurityGroupId:
+          'Fn::ImportValue': !Sub '${ParentClientStack}-ClientSecurityGroup'
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      FileSystemTags:
+      - Key: Name
+        Value: !Ref VolumeName
+  MountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPrivate'
+      SecurityGroups:
+      - !Ref MountTargetSecurityGroup
+  MountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPrivate'
+      SecurityGroups:
+      - !Ref MountTargetSecurityGroup
+  MountTargetC:
+    Type: AWS::EFS::MountTarget
+    Condition: HasMountC
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPrivate'
+      SecurityGroups:
+      - !Ref MountTargetSecurityGroup
+  MountTargetD:
+    Type: AWS::EFS::MountTarget
+    Condition: HasMountD
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetDPrivate'
+      SecurityGroups:
+      - !Ref MountTargetSecurityGroup
+Outputs:
+  TemplateID:
+    Description: 'cloudonaut.io template id.'
+    Value: 'state/efs'
+  TemplateVersion:
+    Description: 'cloudonaut.io template version.'
+    Value: '__VERSION__'
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+  VolumeName:
+    Description: 'EFS Volume Name'
+    Value: !Ref VolumeName
+    Export:
+      Name: !Sub '${AWS::StackName}-VolumeName'
+  FileSystem:
+    Description: 'EFS FileSystem'
+    Value: !Ref FileSystem
+    Export:
+      Name: !Sub '${AWS::StackName}-FileSystem'
+  MountTargetSecurityGroup:
+    Description: 'EFS MountTargetSecurityGroup'
+    Value: !Ref MountTargetSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-MountTargetSecurityGroup'
