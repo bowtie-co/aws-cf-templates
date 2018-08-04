@@ -134,6 +134,7 @@ Parameters:
   Image:
     Description: 'The image to use for a container, which is passed directly to the Docker daemon. You can use images in the Docker Hub registry or specify other repositories (repository-url/image:tag).'
     Type: String
+    Default: bowtie/prerender-service
   Cpu:
     Description: 'Amount of CPU to allocate for the service task'
     Type: Number
