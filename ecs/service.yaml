@@ -292,6 +292,10 @@ Resources:
     Properties:
       Family: !Ref AWS::StackName
       TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      Volumes:
+      - Host:
+          SourcePath: "/efs"
+        Name: "efs"
       ContainerDefinitions:
         - Name: !Ref AppName
           Image: !Sub ${Image}:${Tag}
@@ -305,6 +309,9 @@ Resources:
               - ' '
               - !Ref AppCommand
             - !Ref 'AWS::NoValue'
+          MountPoints:
+          - SourceVolume: "efs"
+            ContainerPath: "/efs"
           PortMappings: !If
             - HasNotNginxProxy
             - - ContainerPort: !Ref AppPort
