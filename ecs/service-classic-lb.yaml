@@ -1,0 +1,416 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "ECS: service that runs on an ECS cluster and uses the cluster's ALB based on ecs/cluster.yaml, a cloudonaut.io template"
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentClusterStack
+      - ParentLoadBalancerStack
+      - ParentAlertStack
+    - Label:
+        default: 'Application Parameters'
+      Parameters:
+      - Image
+      - Tag
+      - AppEnv
+      - AppName
+      - AppCpu
+      - AppMemory
+    - Label:
+        default: 'Task Parameters'
+      Parameters:
+      - DesiredCount
+      - MaxCapacity
+      - MinCapacity
+    - Label:
+        default: 'Deployment Parameters'
+      Parameters:
+      - DeployMaxPercent
+      - DeployMinPercent
+Parameters:
+  ParentClusterStack:
+    Description: 'Stack name of parent Cluster stack based on ecs/cluster.yaml template.'
+    Type: String
+  ParentLoadBalancerStack:
+    Description: 'Optional stack name of parent Load Balancer stack based on ec2/alb.yaml template.'
+    Type: String
+  ParentAlertStack:
+    Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
+    Type: String
+    Default: ''
+  DesiredCount:
+    Description: 'The number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 2
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
+  MaxCapacity:
+    Description: 'The maximum number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 4
+    ConstraintDescription: 'Must be >= 1'
+    MinValue: 1
+  MinCapacity:
+    Description: 'The minimum number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 2
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
+  DeployMaxPercent:
+    Description: 'Maximum percentage of tasks that can run simultaneously while deploying updates'
+    Type: Number
+    Default: 200
+    MinValue: 100
+    MaxValue: 500
+  DeployMinPercent:
+    Description: 'Minimum percentage of tasks that can run simultaneously while deploying updates'
+    Type: Number
+    Default: 50
+    MinValue: 0
+    MaxValue: 100
+  Image:
+    Type: String
+    Description: The docker image for this service
+  Tag:
+    Type: String
+    Default: latest
+    Description: Tag to deploy for this service
+  AppEnv:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Application environment
+  AppName:
+    Type: String
+    Default: app
+    Description: Application name (used as container name, needs to match docker directory for nginx to handle assets)
+  AppCpu:
+    Type: Number
+    Default: 128
+    Description: The amount of cpu to allocate to nginx proxy
+  AppMemory:
+    Type: Number
+    Default: 128
+    Description: The amount of memory to allocate to nginx proxy
+Mappings: {}
+Conditions:
+  HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+Resources:
+  ServiceBucket:
+    Type: AWS::S3::Bucket
+  CloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref AWS::StackName
+  TaskRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs-tasks.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:*'
+            Resource:
+            - !Sub 'arn:aws:s3:::${ServiceBucket}'
+            - !Sub 'arn:aws:s3:::${ServiceBucket}/*'
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      Volumes:
+      - Host:
+          SourcePath: "/efs"
+        Name: "efs"
+      ContainerDefinitions:
+      - Name: !Ref AppName
+        Image: !Sub ${Image}:${Tag}
+        Essential: true
+        Cpu: !Ref AppCpu
+        Memory: !Ref AppMemory
+        MountPoints:
+        - SourceVolume: "efs"
+          ContainerPath: "/efs"
+        PortMappings:
+        - ContainerPort: 80
+          HostPort: 80
+        - ContainerPort: 443
+          HostPort: 443
+        Environment:
+        - Name: APP_ENV
+          Value: !Ref AppEnv
+        - Name: AWS_BUCKET_NAME
+          Value: !Ref ServiceBucket
+        - Name: AWS_REGION
+          Value: !Ref 'AWS::Region'
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref CloudwatchLogsGroup
+            awslogs-region: !Ref AWS::Region
+            awslogs-stream-prefix: !Ref AWS::StackName
+  HttpSecurityGroupInELB:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-SecurityGroup'
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-SecurityGroup'
+  HttpsSecurityGroupInELB:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-SecurityGroup'
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId:
+        'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-SecurityGroup'
+  ServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole'
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs.amazonaws.com'
+          Action: 'sts:AssumeRole'
+  Service:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      Cluster:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      DeploymentConfiguration:
+        MaximumPercent: !Ref DeployMaxPercent
+        MinimumHealthyPercent: !Ref DeployMinPercent
+      DesiredCount: !Ref DesiredCount
+      LoadBalancers:
+      - ContainerName: !Ref AppName
+        ContainerPort: 80
+        LoadBalancerName:
+          'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-LoadBalancerName'
+      PlacementConstraints:
+      - Type: distinctInstance
+      PlacementStrategies:
+      - Type: spread
+        Field: 'attribute:ecs.availability-zone'
+      - Type: spread
+        Field: instanceId
+      Role: !GetAtt 'ServiceRole.Arn'
+      TaskDefinition: !Ref TaskDefinition
+  ScalableTargetRole: # based on http://docs.aws.amazon.com/AmazonECS/latest/developerguide/autoscale_IAM_role.html
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'application-autoscaling.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: ecs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ecs:DescribeServices'
+            - 'ecs:UpdateService'
+            Resource: '*'
+      - PolicyName: cloudwatch
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'cloudwatch:DescribeAlarms'
+            Resource: '*'
+  ScalableTarget:
+    Type: 'AWS::ApplicationAutoScaling::ScalableTarget'
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub
+      - 'service/${Cluster}/${Service}'
+      - Cluster:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+        Service: !GetAtt 'Service.Name'
+      RoleARN: !GetAtt 'ScalableTargetRole.Arn'
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ServiceNamespace: ecs
+  ScaleUpPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-scale-up'
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 300
+        MinAdjustmentMagnitude: 1
+        StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          ScalingAdjustment: 25
+  ScaleDownPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-scale-down'
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 300
+        MinAdjustmentMagnitude: 1
+        StepAdjustments:
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -25
+  CPUUtilizationTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: !Sub '${AWS::StackName} - Average CPU utilization over last 10 minutes higher than 80%'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 10
+      Threshold: 80
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+  CPUUtilizationHighAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: !Sub '${AWS::StackName} - Service is running out of CPU'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 60
+      AlarmActions:
+      - !Ref ScaleUpPolicy
+  CPUUtilizationLowAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: !Sub '${AWS::StackName} - Service is wasting CPU'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: LessThanThreshold
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 10
+      Threshold: 30
+      AlarmActions:
+      - !Ref ScaleDownPolicy
+  MemoryUtilizationTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: !Sub '${AWS::StackName} - Average memory utilization over last 10 minutes higher than 80%'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: MemoryUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 10
+      Threshold: 80
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+  MemoryUtilizationHighAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: !Sub '${AWS::StackName} - Service is running out of memory'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: MemoryUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 60
+      AlarmActions:
+      - !Ref ScaleUpPolicy
+  MemoryUtilizationLowAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: !Sub '${AWS::StackName} - Service is wasting memory'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: MemoryUtilization
+      ComparisonOperator: LessThanThreshold
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 10
+      Threshold: 30
+      AlarmActions:
+      - !Ref ScaleDownPolicy
+Outputs:
+  TemplateID:
+    Description: 'cloudonaut.io template id.'
+    Value: 'ecs/service-cluster-alb'
+  TemplateVersion:
+    Description: 'cloudonaut.io template version.'
+    Value: '__VERSION__'
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'

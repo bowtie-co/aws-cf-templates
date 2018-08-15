@@ -1,0 +1,123 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2-ALB: ELB V2 (Application Load Balancer)'
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentVPCStack
+      - ParentAlertStack
+    - Label:
+        default: 'Load Balancer Parameters'
+      Parameters:
+      - Scheme
+Parameters:
+  ParentVPCStack:
+    Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
+    Type: String
+  ParentAlertStack:
+    Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
+    Type: String
+    Default: ''
+  Scheme:
+    Description: 'Indicates whether the load balancer in front of the ECS service is internet-facing or internal.'
+    Type: String
+    Default: 'internet-facing'
+    AllowedValues:
+    - 'internet-facing'
+    - internal
+
+Mappings: {}
+Conditions:
+  HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+  HasSchemeInternal: !Equals [!Ref Scheme, 'internal']
+Resources:
+  SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub '${AWS::StackName}'
+      VpcId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+  SecurityGroupHttp:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: '0.0.0.0/0'
+  SecurityGroupHttps:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: '0.0.0.0/0'
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      LoadBalancerName: !Sub '${AWS::StackName}'
+      Listeners:
+      - LoadBalancerPort: '80'
+        InstancePort: '80'
+        Protocol: TCP
+      - LoadBalancerPort: '443'
+        InstancePort: '443'
+        Protocol: TCP
+      HealthCheck:
+        Target: TCP:80
+        HealthyThreshold: '5'
+        UnhealthyThreshold: '3'
+        Interval: '30'
+        Timeout: '5'
+      SecurityGroups:
+      - !Ref SecurityGroup
+      Subnets: !If
+      - HasSchemeInternal
+      - !Split
+        - ','
+        - 'Fn::ImportValue':
+            !Sub '${ParentVPCStack}-SubnetsPrivate'
+      - !Split
+        - ','
+        - 'Fn::ImportValue':
+            !Sub '${ParentVPCStack}-SubnetsPublic'
+
+Outputs:
+  TemplateID:
+    Description: 'cloudonaut.io template id.'
+    Value: 'ec2/alb'
+  TemplateVersion:
+    Description: 'cloudonaut.io template version.'
+    Value: '__VERSION__'
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+  LoadBalancerName:
+    Description: 'Classic Load Balancer Name.'
+    Value: !Sub '${AWS::StackName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-LoadBalancerName'
+  DNSName:
+    Description: 'The DNS name for the application load balancer.'
+    Value: !GetAtt 'LoadBalancer.DNSName'
+    Export:
+      Name: !Sub '${AWS::StackName}-DNSName'
+  SecurityGroup:
+    Description: 'Load Balancer Security Group'
+    Value: !Ref SecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroup'
+  Arn:
+    Description: 'Load Balancer Arn'
+    Value: !Ref LoadBalancer
+    Export:
+      Name: !Sub '${AWS::StackName}-Arn'
+  CanonicalHostedZoneNameID:
+    Description: 'The ID of the Amazon Route 53 hosted zone associated with the load balancer.'
+    Value: !GetAtt LoadBalancer.CanonicalHostedZoneNameID
+    Export:
+      Name: !Sub '${AWS::StackName}-CanonicalHostedZoneNameID'
