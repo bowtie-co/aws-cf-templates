@@ -318,6 +318,8 @@ Resources:
                 HostPort: 0
             - !Ref 'AWS::NoValue'
           Environment:
+            - Name: AWS_CF_STACK_NAME
+              Value: !Ref AWS::StackName
             - Name: APP_ENV
               Value: !Ref AppEnv
             - Name: AWS_BUCKET_NAME
