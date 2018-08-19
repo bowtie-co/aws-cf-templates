@@ -253,8 +253,7 @@ Resources:
         - Name: nginx
           Image: cmr1/nginx-proxy
           Essential: true
-          Cpu: 128
-          Memory: 64
+          MemoryReservation: 64
           Links:
             - !Sub "${AppName}:${AppName}"
           PortMappings:
@@ -286,8 +285,6 @@ Resources:
         - Name: !Ref AppName
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
           Essential: true
-          Cpu: 256
-          Memory: 464
           MemoryReservation: 400
           Environment:
             - Name: RAILS_ENV
@@ -326,8 +323,6 @@ Resources:
         - Name: sidekiq
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
           Essential: true
-          Cpu: 256
-          Memory: 464
           MemoryReservation: 400
           Command:
             - bundle
@@ -372,8 +367,7 @@ Resources:
         - Name: !Ref AppName
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
           Essential: true
-          Cpu: 100
-          Memory: 128
+          MemoryReservation: 128
           Command:
             - bundle
             - exec
@@ -414,8 +408,7 @@ Resources:
         - Name: !Ref AppName
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
           Essential: true
-          Cpu: 100
-          Memory: 128
+          MemoryReservation: 128
           Command:
             - bundle
             - exec
