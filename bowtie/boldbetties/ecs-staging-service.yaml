@@ -1,0 +1,724 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "ECS: service that runs on an ECS cluster and uses the cluster's ALB based on ecs/cluster.yaml, a cloudonaut.io template"
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentClusterStack
+      - ParentAlertStack
+    - Label:
+        default: 'Application Parameters'
+      Parameters:
+      - RepoSlug
+      - Env
+      - Tag
+      - Port
+      - AppName
+      - ClientMaxBodySize
+      - IncludeSidekiq
+    - Label:
+        default: 'Load Balancer Parameters'
+      Parameters:
+      - LoadBalancerPriority
+      - LoadBalancerHostPattern
+      - LoadBalancerPath
+      - LoadBalancerHttps
+      - LoadBalancerDeregistrationDelay
+    - Label:
+        default: 'Health Check Parameters'
+      Parameters:
+      - HealthCheckPath
+      - HealthCheckTimeout
+      - HealthCheckInterval
+      - HealthCheckProtocol
+      - HealthCheckPort
+      - HealthCheckSuccessCode
+      - HealthCheckHealthyThreshold
+      - HealthCheckUnhealthyThreshold
+    - Label:
+        default: 'Task Parameters'
+      Parameters:
+      - DesiredCount
+      - MaxCapacity
+      - MinCapacity
+    - Label:
+        default: 'Deployment Parameters'
+      Parameters:
+      - DeployMaxPercent
+      - DeployMinPercent
+Parameters:
+  RepoSlug:
+    Type: String
+    Description: The slug for the GitHub repository that will deploy to this service
+
+  Env:
+    Type: String
+    Default: development
+    AllowedValues: 
+      - development
+      - staging
+      - production
+    Description: Application environment
+
+  Port:
+    Type: Number
+    Default: 3000
+    Description: The port that the Rails app is running on
+
+  Tag:
+    Type: String
+    Default: latest
+    Description: Tag to deploy for this service (docker tag on ECR)
+
+  AppName:
+    Type: String
+    Default: app
+    Description: Application name (used as container name, needs to match docker directory for nginx to handle assets)
+
+  ClientMaxBodySize:
+    Type: String
+    Default: '1m'
+    Description: Max upload file size (0 for disabled) (http://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size)
+
+  IncludeSidekiq:
+    Type: String
+    Default: 'yes'
+    AllowedValues:
+      - 'yes'
+      - 'no'
+    Description: Setup separate sidekiq service with this rails app?
+
+  HealthCheckPath:
+    Type: String
+    Default: '/'
+    Description: Path to check for app health status
+  HealthCheckTimeout:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 60
+    Description: Timeout (in seconds) for health check requests
+  HealthCheckInterval:
+    Type: Number
+    Default: 10
+    MinValue: 5
+    MaxValue: 300
+    Description: Interval (in seconds) for health check requests
+  HealthCheckProtocol:
+    Type: String
+    Default: HTTP
+    AllowedValues:
+      - HTTP
+      - HTTPS
+    Description: Protocol to use for health check requests
+  HealthCheckPort:
+    Type: Number
+    Default: 80
+    Description: Port to use for health check requests
+  HealthCheckSuccessCode:
+    Type: String
+    Default: '200'
+    Description: Successful code pattern for health check to consider instance "healthy" (e.g. "200" or "200-399")
+  HealthCheckHealthyThreshold:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of times a target responds with expected healthy code before being considered "healthy"
+  HealthCheckUnhealthyThreshold:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 20
+    Description: Number of times a target responds with unexpected response code before being considered "unhealthy"
+
+  ParentClusterStack:
+    Description: 'Stack name of parent Cluster stack based on ecs/cluster.yaml template.'
+    Type: String
+  ParentAlertStack:
+    Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
+    Type: String
+    Default: ''
+  LoadBalancerPriority:
+    Description: 'The priority for the rule. Elastic Load Balancing evaluates rules in priority order, from the lowest value to the highest value. If a request satisfies a rule, Elastic Load Balancing ignores all subsequent rules. A target group can have only one rule with a given priority.'
+    Type: Number
+    Default: 1
+    ConstraintDescription: 'Must be in the range [1-99999]'
+    MinValue: 1
+    MaxValue: 99999
+  LoadBalancerHostPattern:
+    Description: 'Optional host pattern. Specify LoadBalancerPath and/or LoadBalancerHostPattern.'
+    Type: String
+    Default: ''
+    ConstraintDescription: 'Must not be longer than 255'
+    MaxLength: 255
+  LoadBalancerPath:
+    Description: 'Optional path part of the path pattern. E.g., for service, the path pattern will be /service/*.  Specify LoadBalancerPath and/or LoadBalancerHostPattern.'
+    Type: String
+    Default: ''
+    ConstraintDescription: 'Must not be longer than 255'
+    MaxLength: 255
+  LoadBalancerHttps:
+    Description: 'If the cluster supports HTTPS (LoadBalancerCertificateArn is set) you can enable HTTPS for the service'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+  LoadBalancerDeregistrationDelay:
+    Description: 'The amount time (in seconds) to wait before changing the state of a deregistering target from draining to unused.'
+    Type: Number
+    Default: 30
+    ConstraintDescription: 'Must be in the range [0-3600]'
+    MinValue: 0
+    MaxValue: 3600
+  DesiredCount:
+    Description: 'The number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 0
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
+  MaxCapacity:
+    Description: 'The maximum number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 4
+    ConstraintDescription: 'Must be >= 1'
+    MinValue: 1
+  MinCapacity:
+    Description: 'The minimum number of simultaneous tasks, that you want to run on the cluster.'
+    Type: Number
+    Default: 0
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
+  DeployMaxPercent:
+    Description: 'Maximum percentage of tasks that can run simultaneously while deploying updates'
+    Type: Number
+    Default: 200
+    MinValue: 100
+    MaxValue: 500
+  DeployMinPercent:
+    Description: 'Minimum percentage of tasks that can run simultaneously while deploying updates'
+    Type: Number
+    Default: 50
+    MinValue: 0
+    MaxValue: 100
+Mappings: {}
+Conditions:
+  HasLoadBalancerHttps: !Equals [!Ref LoadBalancerHttps, 'true']
+  HasLoadBalancerPath: !Not [!Equals [!Ref LoadBalancerPath, '']]
+  HasLoadBalancerHostPattern: !Not [!Equals [!Ref LoadBalancerHostPattern, '']]
+  HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+  HasSidekiq: !Equals [!Ref IncludeSidekiq, 'yes']
+  HasZeroDesired: !Equals [!Ref DesiredCount, 0]
+Resources:
+  PaperClipBucket:
+    Type: AWS::S3::Bucket
+
+  CloudwatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref AWS::StackName
+
+  TaskRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs-tasks.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:*'
+            Resource:
+            - !Sub 'arn:aws:s3:::${PaperClipBucket}'
+            - !Sub 'arn:aws:s3:::${PaperClipBucket}/*'
+  
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: nginx
+          Image: cmr1/nginx-proxy
+          Essential: true
+          Cpu: 128
+          Memory: 64
+          Links:
+            - !Sub "${AppName}:${AppName}"
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 0
+          VolumesFrom:
+            - SourceContainer: !Ref AppName
+          Environment:
+            - Name: CLIENT_MAX_BODY_SIZE
+              Value: !Ref ClientMaxBodySize
+            - Name: SERVER_TYPE
+              Value: !If
+                - HasLoadBalancerHttps
+                - "elb"
+                - "http"
+            - Name: SERVER_NAME
+              Value: !If
+                - HasLoadBalancerHostPattern
+                - !Ref LoadBalancerHostPattern
+                - "_"
+            - Name: SERVER_BACKENDS
+              Value: !Sub "/:${AppName}:${Port}"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
+          Essential: true
+          Cpu: 256
+          Memory: 464
+          MemoryReservation: 400
+          Environment:
+            - Name: RAILS_ENV
+              Value: !Ref Env
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref PaperClipBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref LoadBalancerHostPattern
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasLoadBalancerHttps
+                - "https://"
+                - "http://"
+            - Name: ACTION_MAILER_HOST
+              Value: !If
+                - HasLoadBalancerHttps
+                - !Sub 'https://${LoadBalancerHostPattern}'
+                - !Sub 'http://${LoadBalancerHostPattern}'
+            
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  SidekiqTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasSidekiq    
+    Properties:
+      Family: !Sub ${AWS::StackName}-sidekiq
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: sidekiq
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
+          Essential: true
+          Cpu: 256
+          Memory: 464
+          MemoryReservation: 400
+          Command:
+            - bundle
+            - exec
+            - sidekiq
+            - -q
+            - default 
+            - -q 
+            - mailers
+          Environment:
+            - Name: RAILS_ENV
+              Value: !Ref Env
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref PaperClipBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref LoadBalancerHostPattern
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasLoadBalancerHttps
+                - "https://"
+                - "http://"
+            - Name: ACTION_MAILER_HOST
+              Value: !If
+                - HasLoadBalancerHttps
+                - !Sub 'https://${LoadBalancerHostPattern}'
+                - !Sub 'http://${LoadBalancerHostPattern}'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  DBResetTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-db-reset
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
+          Essential: true
+          Cpu: 100
+          Memory: 128
+          Command:
+            - bundle
+            - exec
+            - rake 
+            - db:reset
+          Environment:
+            - Name: RAILS_ENV
+              Value: !Ref Env
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref PaperClipBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref LoadBalancerHostPattern
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasLoadBalancerHttps
+                - "https://"
+                - "http://"
+            - Name: ACTION_MAILER_HOST
+              Value: !If
+                - HasLoadBalancerHttps
+                - !Sub 'https://${LoadBalancerHostPattern}'
+                - !Sub 'http://${LoadBalancerHostPattern}'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  DBMigrateTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-db-migrate
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
+          Essential: true
+          Cpu: 100
+          Memory: 128
+          Command:
+            - bundle
+            - exec
+            - rake 
+            - db:migrate
+          Environment:
+            - Name: RAILS_ENV
+              Value: !Ref Env
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref PaperClipBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - Name: APP_HOST
+              Value: !Ref LoadBalancerHostPattern
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasLoadBalancerHttps
+                - "https://"
+                - "http://"
+            - Name: ACTION_MAILER_HOST
+              Value: !If
+                - HasLoadBalancerHttps
+                - !Sub 'https://${LoadBalancerHostPattern}'
+                - !Sub 'http://${LoadBalancerHostPattern}'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref AWS::StackName
+
+  LoadBalancerTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: !Ref HealthCheckInterval
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckProtocol: !Ref HealthCheckProtocol
+      HealthCheckTimeoutSeconds: !Ref HealthCheckTimeout
+      HealthyThresholdCount: !Ref HealthCheckHealthyThreshold
+      Matcher:
+        HttpCode: !Ref HealthCheckSuccessCode
+      Port: !Ref HealthCheckPort
+      Protocol: !Ref HealthCheckProtocol
+      UnhealthyThresholdCount: !Ref HealthCheckUnhealthyThreshold
+      VpcId:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-VPC'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: !Ref LoadBalancerDeregistrationDelay
+  LoadBalancerHttpListenerRule:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      Conditions: !If
+      - HasLoadBalancerPath
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+          - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+        - - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+        - - Field: path-pattern
+            Values: 
+              - '*'
+      ListenerArn:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-HttpListener'
+      Priority: !Ref LoadBalancerPriority
+  LoadBalancerHttpsListenerRule:
+    Condition: HasLoadBalancerHttps
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      Conditions: !If
+      - HasLoadBalancerPath
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+          - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+        - - Field: path-pattern
+            Values:
+            - !Sub '/${LoadBalancerPath}/*'
+      - !If
+        - HasLoadBalancerHostPattern
+        - - Field: host-header
+            Values:
+            - !Ref LoadBalancerHostPattern
+        - - Field: path-pattern
+            Values: 
+              - '*'
+      ListenerArn:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-HttpsListener'
+      Priority: !Ref LoadBalancerPriority
+  ServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole'
+      AssumeRolePolicyDocument:
+        Version: '2008-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'ecs.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      
+  SidekiqService:
+    Type: 'AWS::ECS::Service'
+    Condition: HasSidekiq
+    Properties:
+      Cluster:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      DeploymentConfiguration:
+        MaximumPercent: !Ref DeployMaxPercent
+        MinimumHealthyPercent: !Ref DeployMinPercent
+      DesiredCount: !If
+        - HasZeroDesired
+        - 0
+        - 1
+      TaskDefinition: !Ref SidekiqTaskDefinition
+
+  Service:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      Cluster:
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      DeploymentConfiguration:
+        MaximumPercent: !Ref DeployMaxPercent
+        MinimumHealthyPercent: !Ref DeployMinPercent
+      DesiredCount: !Ref DesiredCount
+      LoadBalancers:
+      - ContainerName: nginx
+        ContainerPort: 80
+        TargetGroupArn: !Ref LoadBalancerTargetGroup
+      Role: !GetAtt 'ServiceRole.Arn'
+      TaskDefinition: !Ref TaskDefinition
+  ScalableTargetRole: # based on http://docs.aws.amazon.com/AmazonECS/latest/developerguide/autoscale_IAM_role.html
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'application-autoscaling.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: ecs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ecs:DescribeServices'
+            - 'ecs:UpdateService'
+            Resource: '*'
+      - PolicyName: cloudwatch
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'cloudwatch:DescribeAlarms'
+            Resource: '*'
+  ScalableTarget:
+    Type: 'AWS::ApplicationAutoScaling::ScalableTarget'
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub
+      - 'service/${Cluster}/${Service}'
+      - Cluster:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+        Service: !GetAtt 'Service.Name'
+      RoleARN: !GetAtt 'ScalableTargetRole.Arn'
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ServiceNamespace: ecs
+  ScaleUpPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-scale-up'
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration: 
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 300
+        MinAdjustmentMagnitude: 1
+        StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          ScalingAdjustment: 25
+  ScaleDownPolicy:
+    Type: 'AWS::ApplicationAutoScaling::ScalingPolicy'
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-scale-down'
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration: 
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 300
+        MinAdjustmentMagnitude: 1
+        StepAdjustments:
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -25
+  CPUUtilizationTooHighAlarm:
+    Condition: HasAlertTopic
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Average CPU utilization over last 10 minutes higher than 80%'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      AlarmActions:
+      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+  CPUUtilizationHighAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Service is running out of CPU'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: GreaterThanThreshold
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 60
+      AlarmActions:
+      - !Ref ScaleUpPolicy
+  CPUUtilizationLowAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Service is wasting CPU'
+      Namespace: 'AWS/ECS'
+      Dimensions:
+      - Name: ClusterName
+        Value:
+          'Fn::ImportValue': !Sub '${ParentClusterStack}-Cluster'
+      - Name: ServiceName
+        Value: !GetAtt 'Service.Name'
+      MetricName: CPUUtilization
+      ComparisonOperator: LessThanThreshold
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 30
+      AlarmActions:
+      - !Ref ScaleDownPolicy
+Outputs:
+  PaperClipBucket:
+    Value: !Ref PaperClipBucket
+    Export: 
+      Name: !Sub '${AWS::StackName}-PaperClipBucket'
+  Repository:
+    Value: !Ref RepoSlug
+    Export:
+      Name: !Sub '${AWS::StackName}-RepoSlug'
+  TemplateID:
+    Description: 'cloudonaut.io template id'
+    Value: 'ecs/service-cluster-alb'
+  DNSName:
+    Description: 'The DNS name for the ECS cluster/service load balancer.'
+    Value:
+      'Fn::ImportValue': !Sub '${ParentClusterStack}-DNSName'
+    Export:
+      Name: !Sub '${AWS::StackName}-DNSName'
+  URL:
+    Description: 'URL to the ECS service.' # TODO does not work with LoadBalancerHostPattern
+    Value: !Sub
+    - '${ClusterURL}/${LoadBalancerPath}/'
+    - ClusterURL: 
+        'Fn::ImportValue': !Sub '${ParentClusterStack}-URL'
+      LoadBalancerPath: !Ref LoadBalancerPath
+    Export:
+      Name: !Sub '${AWS::StackName}-URL'
