@@ -20,6 +20,7 @@ Metadata:
     - Label:
         default: 'Application Parameters'
       Parameters:
+      - AppType
       - Image
       - Tag
       - AppCommand
@@ -174,6 +175,13 @@ Parameters:
     Default: 50
     MinValue: 0
     MaxValue: 100
+  AppType:
+    Description: 'Type of application (rails will create db tasks)'
+    Type: String
+    Default: basic
+    AllowedValues:
+      - basic
+      - rails
   Image:
     Type: String
     Description: The docker image for this service
@@ -259,6 +267,7 @@ Conditions:
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
   HasAlertTopicAndLoadBalancer: !And [!Condition HasLoadBalancer, !Condition HasAlertTopic]
   HasAppForceHttpsAndLoadBalancer: !And [!Condition HasLoadBalancer, !Condition HasAppForceHttps]
+  HasAppTypeRails: !Equals [!Ref AppType, 'rails']
 Resources:
   ServiceBucket:
     Type: AWS::S3::Bucket
@@ -388,6 +397,108 @@ Resources:
                 awslogs-group: !Ref CloudwatchLogsGroup
                 awslogs-region: !Ref AWS::Region
                 awslogs-stream-prefix: !Ref AWS::StackName
+  DBResetTaskDefinition:
+    Condition: HasAppTypeRails
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-db-reset'
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      Volumes:
+      - Host:
+          SourcePath: "/efs"
+        Name: "efs"
+      ContainerDefinitions:
+        - Name: !Sub '${AppName}-db-reset'
+          Image: !Sub ${Image}:${Tag}
+          Essential: true
+          Cpu: !Ref AppCpu
+          Memory: !Ref AppMemory
+          Privileged: !Ref AppPrivileged
+          Command: [ 'bundle', 'exec', 'rake', 'db:reset' ]
+          MountPoints:
+          - SourceVolume: "efs"
+            ContainerPath: "/efs"
+          Environment:
+            - Name: AWS_CF_STACK_NAME
+              Value: !Ref AWS::StackName
+            - Name: APP_ENV
+              Value: !Ref AppEnv
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref ServiceBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - !If
+              - HasLoadBalancerHostPattern
+              - Name: APP_HOST
+                Value: !Ref LoadBalancerHostPattern
+              - !If
+                - HasLoadBalancer
+                - Name: APP_HOST
+                  Value:
+                    'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-DNSName'
+                - !Ref 'AWS::NoValue'
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasAppForceHttps
+                - "https://"
+                - "http://"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Sub '${AWS::StackName}-db-reset'
+  DBMigrateTaskDefinition:
+    Condition: HasAppTypeRails
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-db-migrate'
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      Volumes:
+      - Host:
+          SourcePath: "/efs"
+        Name: "efs"
+      ContainerDefinitions:
+        - Name: !Sub '${AppName}-db-migrate'
+          Image: !Sub ${Image}:${Tag}
+          Essential: true
+          Cpu: !Ref AppCpu
+          Memory: !Ref AppMemory
+          Privileged: !Ref AppPrivileged
+          Command: [ 'bundle', 'exec', 'rake', 'db:migrate' ]
+          MountPoints:
+          - SourceVolume: "efs"
+            ContainerPath: "/efs"
+          Environment:
+            - Name: AWS_CF_STACK_NAME
+              Value: !Ref AWS::StackName
+            - Name: APP_ENV
+              Value: !Ref AppEnv
+            - Name: AWS_BUCKET_NAME
+              Value: !Ref ServiceBucket
+            - Name: AWS_REGION
+              Value: !Ref 'AWS::Region'
+            - !If
+              - HasLoadBalancerHostPattern
+              - Name: APP_HOST
+                Value: !Ref LoadBalancerHostPattern
+              - !If
+                - HasLoadBalancer
+                - Name: APP_HOST
+                  Value:
+                    'Fn::ImportValue': !Sub '${ParentLoadBalancerStack}-DNSName'
+                - !Ref 'AWS::NoValue'
+            - Name: APP_PROTOCOL
+              Value: !If
+                - HasAppForceHttps
+                - "https://"
+                - "http://"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudwatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Sub '${AWS::StackName}-db-migrate'
   # TaskDefinition:
   #   Type: 'AWS::CloudFormation::Stack'
   #   Properties:
