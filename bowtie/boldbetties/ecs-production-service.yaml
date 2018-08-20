@@ -287,7 +287,8 @@ Resources:
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
           Essential: true
           Cpu: 256
-          Memory: 400
+          Memory: 464
+          MemoryReservation: 400
           Environment:
             - Name: RAILS_ENV
               Value: !Ref Env
@@ -325,8 +326,9 @@ Resources:
         - Name: sidekiq
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepoSlug}:${Tag}
           Essential: true
-          Cpu: 192
-          Memory: 256
+          Cpu: 256
+          Memory: 464
+          MemoryReservation: 400
           Command:
             - bundle
             - exec
