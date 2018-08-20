@@ -222,6 +222,8 @@ Resources:
           Protocol: tcp
         Essential: true
         Environment:
+          - Name: AWS_BUCKET_NAME
+            Value: !Ref ServiceBucket
           - Name: PRERENDER_NUM_WORKERS
             Value: !Ref NumWorkers
           - Name: PRERENDER_NUM_ITERATIONS
