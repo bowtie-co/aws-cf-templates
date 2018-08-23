@@ -29,6 +29,7 @@ Metadata:
       - AppPort
       - AppCpu
       - AppMemory
+      - AppMemoryReservation
       - AppForceHttps
       - AppPrivileged
     - Label:
@@ -212,11 +213,15 @@ Parameters:
   AppCpu:
     Type: Number
     Default: 128
-    Description: The amount of cpu to allocate to nginx proxy
+    Description: The amount of cpu to allocate to each app container
   AppMemory:
     Type: Number
+    Default: 256
+    Description: The amount of memory to allocate to each app container (MUST BE > AppMemoryReservation)
+  AppMemoryReservation:
+    Type: Number
     Default: 128
-    Description: The amount of memory to allocate to nginx proxy
+    Description: The amount of memory to reserve for this app (MUST BE < AppMemory)
   AppForceHttps:
     Type: String
     Default: 'yes'
@@ -311,6 +316,7 @@ Resources:
           Essential: true
           Cpu: !Ref AppCpu
           Memory: !Ref AppMemory
+          MemoryReservation: !Ref AppMemoryReservation
           Privileged: !Ref AppPrivileged
           Command: !If
             - HasAppCommand
@@ -335,6 +341,11 @@ Resources:
               Value: !Ref ServiceBucket
             - Name: AWS_REGION
               Value: !Ref 'AWS::Region'
+            - !If
+              - HasAppTypeRails
+              - Name: RAILS_ENV
+                Value: !Ref AppEnv
+              - !Ref 'AWS::NoValue'
             - !If
               - HasLoadBalancerHostPattern
               - Name: APP_HOST
@@ -413,6 +424,7 @@ Resources:
           Essential: true
           Cpu: !Ref AppCpu
           Memory: !Ref AppMemory
+          MemoryReservation: !Ref AppMemoryReservation
           Privileged: !Ref AppPrivileged
           Command: [ 'bundle', 'exec', 'rake', 'db:reset' ]
           MountPoints:
@@ -427,6 +439,11 @@ Resources:
               Value: !Ref ServiceBucket
             - Name: AWS_REGION
               Value: !Ref 'AWS::Region'
+            - !If
+              - HasAppTypeRails
+              - Name: RAILS_ENV
+                Value: !Ref AppEnv
+              - !Ref 'AWS::NoValue'
             - !If
               - HasLoadBalancerHostPattern
               - Name: APP_HOST
@@ -464,6 +481,7 @@ Resources:
           Essential: true
           Cpu: !Ref AppCpu
           Memory: !Ref AppMemory
+          MemoryReservation: !Ref AppMemoryReservation
           Privileged: !Ref AppPrivileged
           Command: [ 'bundle', 'exec', 'rake', 'db:migrate' ]
           MountPoints:
@@ -478,6 +496,11 @@ Resources:
               Value: !Ref ServiceBucket
             - Name: AWS_REGION
               Value: !Ref 'AWS::Region'
+            - !If
+              - HasAppTypeRails
+              - Name: RAILS_ENV
+                Value: !Ref AppEnv
+              - !Ref 'AWS::NoValue'
             - !If
               - HasLoadBalancerHostPattern
               - Name: APP_HOST
