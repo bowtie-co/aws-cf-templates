@@ -273,6 +273,7 @@ Conditions:
   HasAlertTopicAndLoadBalancer: !And [!Condition HasLoadBalancer, !Condition HasAlertTopic]
   HasAppForceHttpsAndLoadBalancer: !And [!Condition HasLoadBalancer, !Condition HasAppForceHttps]
   HasAppTypeRails: !Equals [!Ref AppType, 'rails']
+  HasAppTypeRailsAndLoadBalancer: !And [!Condition HasAppTypeRails, !Condition HasLoadBalancer]
 Resources:
   ServiceBucket:
     Type: AWS::S3::Bucket
@@ -409,7 +410,7 @@ Resources:
                 awslogs-region: !Ref AWS::Region
                 awslogs-stream-prefix: !Ref AWS::StackName
   DBResetTaskDefinition:
-    Condition: HasAppTypeRails
+    Condition: HasAppTypeRailsAndLoadBalancer
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub '${AWS::StackName}-db-reset'
@@ -466,7 +467,7 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: !Sub '${AWS::StackName}-db-reset'
   DBMigrateTaskDefinition:
-    Condition: HasAppTypeRails
+    Condition: HasAppTypeRailsAndLoadBalancer
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub '${AWS::StackName}-db-migrate'
