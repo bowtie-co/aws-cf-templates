@@ -17,6 +17,8 @@ Metadata:
       Parameters:
       - KeyName
       - IAMUserSSHAccess
+      - VolumeSize
+      - VolumeType
     - Label:
         default: 'Cluster Parameters'
       Parameters:
@@ -64,6 +66,20 @@ Parameters:
     AllowedValues:
     - true
     - false
+  VolumeSize:
+    Description: 'Size of the EBS volume that will be attached as root volume (1-1024 GB)'
+    Type: String
+    Default: '16'
+  VolumeType:
+    Description: 'Type of the EBS volume that will be attached as root volume'
+    Type: String
+    Default: standard
+    AllowedValues:
+      - standard
+      - io1
+      - gp2
+      - sc1
+      - st1
   SubnetsReach:
     Description: 'Should the cluster have direct access to the Internet or do you prefer private subnets with NAT?'
     Type: String
@@ -90,14 +106,14 @@ Parameters:
     Description: 'The minimum size of the Auto Scaling group.'
     Type: Number
     Default: 2
-    ConstraintDescription: 'Must be >= 1'
-    MinValue: 1
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
   DesiredCapacity:
     Description: 'The desired start size of the Auto Scaling group.'
     Type: Number
     Default: 2
-    ConstraintDescription: 'Must be >= 1'
-    MinValue: 1
+    ConstraintDescription: 'Must be >= 0'
+    MinValue: 0
   DrainingTimeoutInSeconds:
     Description: 'Maximum time in seconds an EC2 instance waits when terminating until all containers are moved to another EC2 instance (draining).'
     Type: Number
@@ -690,6 +706,11 @@ Resources:
                 - FileSystem:
                     'Fn::ImportValue': !Sub '${ParentEFSStack}-FileSystem'
     Properties:
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+            VolumeType: !Ref VolumeType
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', ECSAMI]
       IamInstanceProfile: !Ref InstanceProfile
       InstanceType: !Ref InstanceType
