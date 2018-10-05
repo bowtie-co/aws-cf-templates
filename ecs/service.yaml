@@ -423,9 +423,8 @@ Resources:
         - Name: !Sub '${AppName}-db-reset'
           Image: !Sub ${Image}:${Tag}
           Essential: true
-          Cpu: !Ref AppCpu
-          Memory: !Ref AppMemory
-          MemoryReservation: !Ref AppMemoryReservation
+          Cpu: 64
+          Memory: 128
           Privileged: !Ref AppPrivileged
           Command: [ 'bundle', 'exec', 'rake', 'db:reset' ]
           MountPoints:
@@ -480,9 +479,8 @@ Resources:
         - Name: !Sub '${AppName}-db-migrate'
           Image: !Sub ${Image}:${Tag}
           Essential: true
-          Cpu: !Ref AppCpu
-          Memory: !Ref AppMemory
-          MemoryReservation: !Ref AppMemoryReservation
+          Cpu: 64
+          Memory: 128
           Privileged: !Ref AppPrivileged
           Command: [ 'bundle', 'exec', 'rake', 'db:migrate' ]
           MountPoints:
