@@ -25,7 +25,7 @@ Metadata:
     - Label:
         default: 'NatGateway Parameters'
       Parameters:
-      - SubnetZone
+      - AZCount
 Parameters:
   ParentVPCStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
@@ -34,17 +34,18 @@ Parameters:
     Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
     Type: String
     Default: ''
-  SubnetZone:
-    Description: 'Subnet zone.'
-    Type: String
-    Default: A
-    AllowedValues:
-    - A
-    - B
-    - C
-    - D
+  AZCount:
+    Description: 'Number of AZs based on parent VPC stack vpc/vpc-*azs.yaml template'
+    Type: Number
+    Default: 2
+    AllowedValues: [2, 3, 4]
 Conditions:
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+  Has2AZs: !Equals [!Ref AZCount, 2]
+  Has3AZs: !Equals [!Ref AZCount, 3]
+  Has4AZs: !Equals [!Ref AZCount, 4]
+  HasSubnetC: !Or [!Condition Has3AZs, !Condition Has4AZs]
+  HasSubnetD: !Condition Has4AZs
 Resources:
   EIP:
     Type: 'AWS::EC2::EIP'
@@ -55,19 +56,42 @@ Resources:
     Properties:
       AllocationId: !GetAtt 'EIP.AllocationId'
       SubnetId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-Subnet${SubnetZone}Public'
-  Route:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'
+  RouteA:
     Type: AWS::EC2::Route
     Properties:
       RouteTableId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-RouteTable${SubnetZone}Private'
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-RouteTablePrivate'
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+  RouteB:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-RouteTableBPrivate'
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+  RouteC:
+    Type: 'AWS::EC2::Route'
+    Condition: HasSubnetC
+    Properties:
+      RouteTableId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-RouteTableCPrivate'
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+  RouteD:
+    Type: 'AWS::EC2::Route'
+    Condition: HasSubnetD
+    Properties:
+      RouteTableId:
+        'Fn::ImportValue': !Sub '${ParentVPCStack}-RouteTableDPrivate'
       DestinationCidrBlock: '0.0.0.0/0'
       NatGatewayId: !Ref NatGateway
   AlarmNatGatewayErrorPortAllocation:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: !Sub 'NAT gateway ${SubnetZone} could not allocate a source port'
+      AlarmDescription: !Sub 'NAT gateway A could not allocate a source port'
       Namespace: 'AWS/NATGateway'
       MetricName: ErrorPortAllocation
       Statistic: Sum
@@ -84,7 +108,7 @@ Resources:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: !Sub 'NAT gateway ${SubnetZone} dropped packets'
+      AlarmDescription: !Sub 'NAT gateway A dropped packets'
       Namespace: 'AWS/NATGateway'
       MetricName: PacketsDropCount
       Statistic: Sum
