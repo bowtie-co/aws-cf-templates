@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'State: RDS Postgres, a cloudonaut.io template, sponsored by https://github.com/ngault'
+Description: 'State: RDS MySQL, a cloudonaut.io template, sponsored by https://github.com/ngault'
 Metadata:
   'AWS::CloudFormation::Interface':
     ParameterGroups:
@@ -96,7 +96,7 @@ Parameters:
   SubDomainNameWithDot:
     Description: 'Name that is used to create the DNS entry with trailing dot, e.g. ${SubDomainNameWithDot}${HostedZoneName}. Leave blank for naked (or apex and bare) domain. Requires ParentZoneStack parameter!'
     Type: String
-    Default: 'postgres.'
+    Default: 'mysql.'
   Encryption:
     Description: 'Enable server side encryption using KMS (customer managed) CMK (ignored when DBSnapshotIdentifier is set, value used from snapshot).'
     Type: String
@@ -130,8 +130,8 @@ Resources:
       VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       SecurityGroupIngress:
       - IpProtocol: tcp
-        FromPort: 5432
-        ToPort: 5432
+        FromPort: 3306
+        ToPort: 3306
         SourceSecurityGroupId: {'Fn::ImportValue': !Sub '${ParentClientStack}-ClientSecurityGroup'}
   DatabaseSecurityGroupInSSHBastion:
     Type: 'AWS::EC2::SecurityGroupIngress'
@@ -139,8 +139,8 @@ Resources:
     Properties:
       GroupId: !Ref DatabaseSecurityGroup
       IpProtocol: tcp
-      FromPort: 5432
-      ToPort: 5432
+      FromPort: 3306
+      ToPort: 3306
       SourceSecurityGroupId: {'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'}
   Key:
     Condition: HasEncryptionAndNotDBSnapshotIdentifier
@@ -193,8 +193,8 @@ Resources:
       DBName: !If [HasDBSnapshotIdentifier, !Ref 'AWS::NoValue', !Ref DBName]
       DBSnapshotIdentifier: !If [HasDBSnapshotIdentifier, !Ref DBSnapshotIdentifier, !Ref 'AWS::NoValue']
       DBSubnetGroupName: !Ref DBSubnetGroup
-      Engine: postgres
-      EngineVersion: !If [HasDBSnapshotIdentifier, !Ref 'AWS::NoValue', '9.6.5']
+      Engine: mysql
+      EngineVersion: !If [HasDBSnapshotIdentifier, !Ref 'AWS::NoValue', '5.7.21']
       KmsKeyId: !If [HasEncryptionAndNotDBSnapshotIdentifier, !Ref Key, !Ref 'AWS::NoValue']
       MasterUsername: !If [HasDBSnapshotIdentifier, !Ref 'AWS::NoValue', !Ref DBMasterUsername]
       MasterUserPassword: !If [HasDBSnapshotIdentifier, !Ref 'AWS::NoValue', !Ref DBMasterUserPassword]
@@ -355,7 +355,7 @@ Resources:
 Outputs:
   TemplateID:
     Description: 'cloudonaut.io template id.'
-    Value: 'state/rds-postgres'
+    Value: 'state/rds-mysql'
   TemplateVersion:
     Description: 'cloudonaut.io template version.'
     Value: '__VERSION__'
