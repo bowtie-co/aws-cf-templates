@@ -292,6 +292,15 @@ Resources:
             Service: 'ecs-tasks.amazonaws.com'
           Action: 'sts:AssumeRole'
       Policies:
+      - PolicyName: sqs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'sqs:*'
+            Resource:
+            - !Sub 'arn:aws:sqs:us-east-1:${AWS::AccountId}:${AppEnv}-*'
       - PolicyName: s3
         PolicyDocument:
           Version: '2012-10-17'
