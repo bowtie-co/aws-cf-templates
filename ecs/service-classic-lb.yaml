@@ -19,6 +19,9 @@ Metadata:
       - AppName
       - AppCpu
       - AppMemory
+      - UlimitName
+      - UlimitSoft
+      - UlimitHard
     - Label:
         default: 'Task Parameters'
       Parameters:
@@ -98,6 +101,19 @@ Parameters:
     Type: Number
     Default: 128
     Description: The amount of memory to allocate to nginx proxy
+  UlimitName:
+    Type: String
+    Default: nofile
+    Description: Ulimit name
+  UlimitSoft:
+    Type: Number
+    Default: 1024
+    Description: Soft limit to set using ulimit
+  UlimitHard:
+    Type: Number
+    Default: 65535
+    Description: Hard limit to set using ulimit
+    MinValue: 1024
 Mappings: {}
 Conditions:
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
@@ -144,6 +160,10 @@ Resources:
         Essential: true
         Cpu: !Ref AppCpu
         Memory: !Ref AppMemory
+        Ulimits:
+          - Name: !Ref UlimitName
+            SoftLimit: !Ref UlimitSoft
+            HardLimit: !Ref UlimitHard
         MountPoints:
         - SourceVolume: "efs"
           ContainerPath: "/efs"
