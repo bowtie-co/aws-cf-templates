@@ -705,6 +705,8 @@ Resources:
                 - 'mount -t nfs4 -o nfsvers=4.1 ${FileSystem}.efs.${AWS::Region}.amazonaws.com:/ /efs'
                 - FileSystem:
                     'Fn::ImportValue': !Sub '${ParentEFSStack}-FileSystem'
+            03_make_swap:
+              command: dd if=/dev/zero of=/swapfile bs=1G count=2 && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
     Properties:
       BlockDeviceMappings:
         - DeviceName: "/dev/xvda"
