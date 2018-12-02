@@ -29,6 +29,7 @@ Metadata:
       - MinSize
       - DesiredCapacity
       - DrainingTimeoutInSeconds
+      - HealthCheckGracePeriodInSeconds
     - Label:
         default: 'Cluster Scaling Parameters'
       Parameters:
@@ -121,6 +122,10 @@ Parameters:
     ConstraintDescription: 'Must be in the range [60-7200]'
     MinValue: 60
     MaxValue: 7200
+  HealthCheckGracePeriodInSeconds:
+    Description: 'The length of time in seconds after a new EC2 instance comes into service that Amazon EC2 Auto Scaling starts checking its health.'
+    Type: Number
+    Default: 300
   ContainerMaxCPU:
     Description: 'The maximum number of cpu reservation per container that you plan to run on this cluster. A container instance has 1,024 CPU units for every CPU core.'
     Type: Number
@@ -738,7 +743,7 @@ Resources:
       MinSize: !Ref MinSize
       MaxSize: !Ref MaxSize
       DesiredCapacity: !Ref DesiredCapacity
-      HealthCheckGracePeriod: 300
+      HealthCheckGracePeriod: !Ref HealthCheckGracePeriodInSeconds
       HealthCheckType: EC2
       NotificationConfigurations: !If
       - HasAlertTopic
