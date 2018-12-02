@@ -343,6 +343,14 @@ Resources:
                 HostPort: 0
             - !Ref 'AWS::NoValue'
           Environment:
+            - Name: APP_CPU
+              Value: !Ref AppCpu
+            - Name: APP_MEMORY
+              Value: !Ref AppMemory
+            - Name: APP_MEMORY_RESERVATION
+              Value: !Ref AppMemoryReservation
+            - Name: APP_BUILD_TAG
+              Value: !Ref Tag
             - Name: AWS_CF_STACK_NAME
               Value: !Ref AWS::StackName
             - Name: APP_ENV
@@ -440,6 +448,14 @@ Resources:
           - SourceVolume: "efs"
             ContainerPath: "/efs"
           Environment:
+            - Name: APP_CPU
+              Value: !Ref AppCpu
+            - Name: APP_MEMORY
+              Value: !Ref AppMemory
+            - Name: APP_MEMORY_RESERVATION
+              Value: !Ref AppMemoryReservation
+            - Name: APP_BUILD_TAG
+              Value: !Ref Tag
             - Name: AWS_CF_STACK_NAME
               Value: !Ref AWS::StackName
             - Name: APP_ENV
@@ -496,6 +512,14 @@ Resources:
           - SourceVolume: "efs"
             ContainerPath: "/efs"
           Environment:
+            - Name: APP_CPU
+              Value: !Ref AppCpu
+            - Name: APP_MEMORY
+              Value: !Ref AppMemory
+            - Name: APP_MEMORY_RESERVATION
+              Value: !Ref AppMemoryReservation
+            - Name: APP_BUILD_TAG
+              Value: !Ref Tag
             - Name: AWS_CF_STACK_NAME
               Value: !Ref AWS::StackName
             - Name: APP_ENV
