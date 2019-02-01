@@ -102,7 +102,7 @@ Parameters:
     Type: Number
     Default: 4
     ConstraintDescription: 'Must be >= 1'
-    MinValue: 1
+    MinValue: 0
   MinSize:
     Description: 'The minimum size of the Auto Scaling group.'
     Type: Number
@@ -704,7 +704,7 @@ Resources:
         mount:
           commands:
             01_make_mount_dir:
-              command: mkdir /efs
+              command: mkdir -p /efs
             02_mount_efs_dir:
               command: !Sub
                 - 'mount -t nfs4 -o nfsvers=4.1 ${FileSystem}.efs.${AWS::Region}.amazonaws.com:/ /efs'
