@@ -32,6 +32,11 @@ Metadata:
       - AppMemoryReservation
       - AppForceHttps
       - AppPrivileged
+      - ContainerHealthCheckCmd
+      - ContainerHealthInterval
+      - ContainerHealthRetries
+      - ContainerHealthStartPeriod
+      - ContainerHealthTimeout
     - Label:
         default: 'Nginx Proxy Parameters'
       Parameters:
@@ -101,6 +106,38 @@ Parameters:
     ConstraintDescription: 'Must be in the range [0-3600]'
     MinValue: 0
     MaxValue: 3600
+  ContainerHealthCheckCmd:
+    Type: String
+    Default: 'exit 0'
+    Description: Shell command to determine health of container (non-zero exit code indicates failure)
+  ContainerHealthInterval:
+    Description: 'The time period in seconds between each health check execution. You may specify between 5 and 300 seconds. The default value is 30 seconds.'
+    Type: Number
+    Default: 30
+    ConstraintDescription: 'Must be in the range [5-300]'
+    MinValue: 5
+    MaxValue: 300
+  ContainerHealthRetries:
+    Description: 'The number of times to retry a failed health check before the container is considered unhealthy. You may specify between 1 and 10 retries. The default value is 3 retries.'
+    Type: Number
+    Default: 3
+    ConstraintDescription: 'Must be in the range [1-10]'
+    MinValue: 1
+    MaxValue: 10
+  ContainerHealthStartPeriod:
+    Description: 'The optional grace period within which to provide containers time to bootstrap before failed health checks count towards the maximum number of retries. (disabled by default.)'
+    Type: Number
+    Default: 0
+    ConstraintDescription: 'Must be in the range [0-300]'
+    MinValue: 0
+    MaxValue: 300
+  ContainerHealthTimeout:
+    Description: 'The time period in seconds to wait for a health check to succeed before it is considered a failure. You may specify between 2 and 60 seconds. The default value is 5 seconds.'
+    Type: Number
+    Default: 5
+    ConstraintDescription: 'Must be in the range [2-60]'
+    MinValue: 2
+    MaxValue: 60
   HealthCheckPath:
     Type: String
     Default: '/'
@@ -334,6 +371,12 @@ Resources:
               - ' '
               - !Ref AppCommand
             - !Ref 'AWS::NoValue'
+          HealthCheck:
+            Command: [ "CMD-SHELL", !Ref ContainerHealthCheckCmd ]
+            Interval: !Ref ContainerHealthInterval
+            Retries: !Ref ContainerHealthRetries
+            StartPeriod: !Ref ContainerHealthStartPeriod
+            Timeout: !Ref ContainerHealthTimeout
           MountPoints:
           - SourceVolume: "efs"
             ContainerPath: "/efs"
