@@ -149,13 +149,13 @@ Parameters:
 Mappings:
   RegionMap:
     'us-east-1':
-      ECSAMI: 'ami-007571470797b8ffa'
+      ECSAMI: 'ami-0a6a36557ea3b9859'
     'us-east-2':
-      ECSAMI: 'ami-0aa9ee1fc70e57450'
+      ECSAMI: 'ami-0cca5d0eeadc8c3c4'
     'us-west-1':
-      ECSAMI: 'ami-0935a5e8655c6d896'
+      ECSAMI: 'ami-066a6b3ae13abc046'
     'us-west-2':
-      ECSAMI: 'ami-0302f3ec240b9d23c'
+      ECSAMI: 'ami-0d2f82a622136a696'
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, '']]
   HasIAMUserSSHAccess: !Equals [!Ref IAMUserSSHAccess, 'true']
