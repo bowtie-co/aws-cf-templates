@@ -147,37 +147,15 @@ Parameters:
     MinValue: 2
     ConstraintDescription: 'Must be >= 2'
 Mappings:
-  RegionMap: # TODO update to Amazon Linux 2 (don't forget to adjust awslogs config as well)
-    'ap-south-1':
-      ECSAMI: 'ami-0590d0dd683026eab'
-    'eu-west-3':
-      ECSAMI: 'ami-06b685336aa497c15'
-    'eu-west-2':
-      ECSAMI: 'ami-0209769f0c963e791'
-    'eu-west-1':
-      ECSAMI: 'ami-05b65c0f6a75c1c64'
-    'ap-northeast-2':
-      ECSAMI: 'ami-0d947b1901b27a37c'
-    'ap-northeast-1':
-      ECSAMI: 'ami-08681de00a0aae54f'
-    'sa-east-1':
-      ECSAMI: 'ami-01bca91ecf4c1f494'
-    'ca-central-1':
-      ECSAMI: 'ami-00d1bdbd447b5933a'
-    'ap-southeast-1':
-      ECSAMI: 'ami-0a3f70f0255af1d29'
-    'ap-southeast-2':
-      ECSAMI: 'ami-05b48eda7f92aadbe'
-    'eu-central-1':
-      ECSAMI: 'ami-0bb804e8cd910a664'
+  RegionMap:
     'us-east-1':
-      ECSAMI: 'ami-0b9a214f40c38d5eb'
+      ECSAMI: 'ami-007571470797b8ffa'
     'us-east-2':
-      ECSAMI: 'ami-09a64272e7fe706b6'
+      ECSAMI: 'ami-0aa9ee1fc70e57450'
     'us-west-1':
-      ECSAMI: 'ami-0e7dd5fe55b87a5fe'
+      ECSAMI: 'ami-0935a5e8655c6d896'
     'us-west-2':
-      ECSAMI: 'ami-00430184c7bb49914'
+      ECSAMI: 'ami-0302f3ec240b9d23c'
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, '']]
   HasIAMUserSSHAccess: !Equals [!Ref IAMUserSSHAccess, 'true']
@@ -248,6 +226,15 @@ Resources:
               'StringEquals':
                 'ecs:cluster':
                   !Sub 'arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${Cluster}'
+      - PolicyName: !Sub '${AWS::StackName}-cfn'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'cloudformation:SignalResource'
+            - 'cloudformation:DescribeStackResource'
+            Resource: '*'
       - PolicyName: !Sub '${AWS::StackName}-ecr'
         PolicyDocument:
           Version: '2012-10-17'
