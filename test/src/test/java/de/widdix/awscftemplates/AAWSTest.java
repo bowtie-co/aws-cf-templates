@@ -8,17 +8,22 @@ import com.amazonaws.services.ec2.AmazonEC2;
 import com.amazonaws.services.ec2.AmazonEC2ClientBuilder;
 import com.amazonaws.services.ec2.model.*;
 import com.amazonaws.services.ec2.model.Filter;
-import com.amazonaws.services.route53.AmazonRoute53;
-import com.amazonaws.services.route53.AmazonRoute53ClientBuilder;
-import com.amazonaws.services.route53.model.*;
+import com.amazonaws.services.identitymanagement.AmazonIdentityManagement;
+import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClientBuilder;
+import com.amazonaws.services.identitymanagement.model.*;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.*;
 import com.amazonaws.services.s3.model.Region;
+import com.amazonaws.services.s3.model.Tag;
 import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
 import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
 import com.amazonaws.services.securitytoken.model.GetCallerIdentityRequest;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.JSchException;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,9 +35,9 @@ public abstract class AAWSTest extends ATest {
 
     private AmazonEC2 ec2;
 
-    private AmazonRoute53 route53;
+    private AmazonIdentityManagement iam;
 
-    private final AmazonS3 s3;
+    protected final AmazonS3 s3;
 
     private final AWSSecurityTokenService sts;
 
@@ -45,9 +50,35 @@ public abstract class AAWSTest extends ATest {
             this.credentialsProvider = new DefaultAWSCredentialsProviderChain();
         }
         this.ec2 = AmazonEC2ClientBuilder.standard().withCredentials(this.credentialsProvider).build();
-        this.route53 = AmazonRoute53ClientBuilder.standard().withCredentials(this.credentialsProvider).build();
+        this.iam = AmazonIdentityManagementClientBuilder.standard().withCredentials(this.credentialsProvider).build();
         this.s3 = AmazonS3ClientBuilder.standard().withCredentials(this.credentialsProvider).build();
         this.sts = AWSSecurityTokenServiceClientBuilder.standard().withCredentials(this.credentialsProvider).build();
+    }
+
+    protected final User createUser(final String userName) throws JSchException {
+        final JSch jsch = new JSch();
+        final com.jcraft.jsch.KeyPair keyPair = com.jcraft.jsch.KeyPair.genKeyPair(jsch, com.jcraft.jsch.KeyPair.RSA, 2048);
+        final ByteArrayOutputStream osPublicKey = new ByteArrayOutputStream();
+        final ByteArrayOutputStream osPrivateKey = new ByteArrayOutputStream();
+        keyPair.writePublicKey(osPublicKey, userName);
+        keyPair.writePrivateKey(osPrivateKey);
+        final byte[] sshPrivateKeyBlob = osPrivateKey.toByteArray();
+        final String sshPublicKeyBody = osPublicKey.toString();
+        this.iam.createUser(new CreateUserRequest().withUserName(userName));
+        final UploadSSHPublicKeyResult res = this.iam.uploadSSHPublicKey(new UploadSSHPublicKeyRequest().withUserName(userName).withSSHPublicKeyBody(sshPublicKeyBody));
+        return new User(userName, sshPrivateKeyBlob, res.getSSHPublicKey().getSSHPublicKeyId());
+    }
+
+    protected final void deleteUser(final Context context, final String userName) {
+        if (Config.get(Config.Key.DELETION_POLICY).equals("delete")) {
+            if (Config.get(Config.Key.FAILURE_POLICY).equals("retain") && context.hasFailure()) {
+                System.out.println("Skip user deletion because of stack failure in context and FAILURE_POLICY := retain");
+            } else {
+                final ListSSHPublicKeysResult res = this.iam.listSSHPublicKeys(new ListSSHPublicKeysRequest().withUserName(userName));
+                this.iam.deleteSSHPublicKey(new DeleteSSHPublicKeyRequest().withUserName(userName).withSSHPublicKeyId(res.getSSHPublicKeys().get(0).getSSHPublicKeyId()));
+                this.iam.deleteUser(new DeleteUserRequest().withUserName(userName));
+            }
+        }
     }
 
     protected final KeyPair createKey(final String keyName) {
@@ -56,58 +87,14 @@ public abstract class AAWSTest extends ATest {
         return res.getKeyPair();
     }
 
-    protected final void deleteKey(final String keyName) {
+    protected final void deleteKey(final Context context, final String keyName) {
         if (Config.get(Config.Key.DELETION_POLICY).equals("delete")) {
-            this.ec2.deleteKeyPair(new DeleteKeyPairRequest().withKeyName(keyName));
-            System.out.println("keypair[" + keyName + "] deleted");
-        }
-    }
-
-    private void waitForDomain(final String name, final String changeId, final ChangeStatus finalStatus) {
-        System.out.println("waitForDomain[" + name + "]: to reach status " + finalStatus);
-        while (true) {
-            try {
-                Thread.sleep(5000);
-            } catch (final InterruptedException e) {
-                // continue
-            }
-            final GetChangeResult res = this.route53.getChange(new GetChangeRequest().withId(changeId));
-            final ChangeStatus currentStatus = ChangeStatus.fromValue(res.getChangeInfo().getStatus());
-            if (finalStatus == currentStatus) {
-                System.out.println("waitForDomain[" + name + "]: final status reached.");
-                return;
+            if (Config.get(Config.Key.FAILURE_POLICY).equals("retain") && context.hasFailure()) {
+                System.out.println("Skip key deletion because of stack failure in context and FAILURE_POLICY := retain");
             } else {
-                System.out.println("waitForDomain[" + name + "]: continue to wait (still in intermediate status " + currentStatus + ") ...");
+                this.ec2.deleteKeyPair(new DeleteKeyPairRequest().withKeyName(keyName));
+                System.out.println("keypair[" + keyName + "] deleted");
             }
-        }
-    }
-
-    protected final String generateDomain(final String prefix) {
-        return prefix + "." + Config.get(Config.Key.DOMAIN_SUFFIX);
-    }
-
-    protected final String createDomain(final String prefix, final String host) {
-        final String name = this.generateDomain(prefix);
-        final ResourceRecord rr = new ResourceRecord(host);
-        final ResourceRecordSet rrs = new ResourceRecordSet(name, RRType.CNAME).withTTL(60L).withResourceRecords(rr);
-        final Change create = new Change().withAction(ChangeAction.CREATE).withResourceRecordSet(rrs);
-        final ChangeBatch changeBatch = new ChangeBatch().withChanges(create);
-        final ChangeResourceRecordSetsRequest req = new ChangeResourceRecordSetsRequest().withHostedZoneId(Config.get(Config.Key.HOSTED_ZONE_ID)).withChangeBatch(changeBatch);
-        final ChangeResourceRecordSetsResult res = this.route53.changeResourceRecordSets(req);
-        this.waitForDomain(name, res.getChangeInfo().getId(), ChangeStatus.INSYNC);
-        return name;
-    }
-
-    protected final void deleteDomain(final String prefix) {
-        if (Config.get(Config.Key.DELETION_POLICY).equals("delete")) {
-            final String name = this.generateDomain(prefix);
-            final ListResourceRecordSetsResult res1 = this.route53.listResourceRecordSets(new ListResourceRecordSetsRequest().withHostedZoneId(Config.get(Config.Key.HOSTED_ZONE_ID)).withStartRecordName(name));
-            final ResourceRecordSet rrs = res1.getResourceRecordSets().get(0);
-            final Change delete = new Change().withAction(ChangeAction.DELETE).withResourceRecordSet(rrs);
-            final ChangeBatch changeBatch = new ChangeBatch().withChanges(delete);
-            final ChangeResourceRecordSetsRequest req = new ChangeResourceRecordSetsRequest().withHostedZoneId(Config.get(Config.Key.HOSTED_ZONE_ID)).withChangeBatch(changeBatch);
-            final ChangeResourceRecordSetsResult res2 = this.route53.changeResourceRecordSets(req);
-            this.waitForDomain(name, res2.getChangeInfo().getId(), ChangeStatus.INSYNC);
         }
     }
 
@@ -120,37 +107,80 @@ public abstract class AAWSTest extends ATest {
         this.s3.putObject(bucketName, key, body);
     }
 
-    protected final void deleteObject(final String bucketName, final String key) {
+    protected final void createObject(final String bucketName, final String key, final InputStream content, final String contentType, final long contentLength) {
+        final ObjectMetadata metadata = new ObjectMetadata();
+        metadata.setContentType(contentType);
+        metadata.setContentLength(contentLength);
+        this.s3.putObject(bucketName, key, content, metadata);
+    }
+
+    protected final boolean doesObjectExist(final String bucketName, final String key) {
+        return this.s3.doesObjectExist(bucketName, key);
+    }
+
+    protected final List<Tag> getObjectTags(final String bucketName, final String key) {
+        return this.s3.getObjectTagging(new GetObjectTaggingRequest(bucketName, key)).getTagSet();
+    }
+
+    protected final void deleteObject(final Context context, final String bucketName, final String key) {
         if (Config.get(Config.Key.DELETION_POLICY).equals("delete")) {
-            this.s3.deleteObject(bucketName, key);
+            if (Config.get(Config.Key.FAILURE_POLICY).equals("retain") && context.hasFailure()) {
+                System.out.println("Skip object deletion because of stack failure in context and FAILURE_POLICY := retain");
+            } else {
+                this.s3.deleteObject(bucketName, key);
+            }
         }
     }
 
-    private void emptyBucket(final String name) {
+    protected final void emptyBucket(final Context context, final String name) {
+        if (Config.get(Config.Key.DELETION_POLICY).equals("delete")) {
+            if (Config.get(Config.Key.FAILURE_POLICY).equals("retain") && context.hasFailure()) {
+                System.out.println("Skip bucket empty because of stack failure in context and FAILURE_POLICY := retain");
+            } else {
+                ObjectListing objectListing = s3.listObjects(name);
+                while (true) {
+                    objectListing.getObjectSummaries().forEach((summary) -> s3.deleteObject(name, summary.getKey()));
+                    if (objectListing.isTruncated()) {
+                        objectListing = s3.listNextBatchOfObjects(objectListing);
+                    } else {
+                        break;
+                    }
+                }
+                VersionListing versionListing = s3.listVersions(new ListVersionsRequest().withBucketName(name));
+                while (true) {
+                    versionListing.getVersionSummaries().forEach((vs) -> s3.deleteVersion(name, vs.getKey(), vs.getVersionId()));
+                    if (versionListing.isTruncated()) {
+                        versionListing = s3.listNextBatchOfVersions(versionListing);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    protected long countBucket(final String name) {
+        long count = 0;
         ObjectListing objectListing = s3.listObjects(name);
         while (true) {
-            objectListing.getObjectSummaries().forEach((summary) -> s3.deleteObject(name, summary.getKey()));
+            count += objectListing.getObjectSummaries().size();
             if (objectListing.isTruncated()) {
                 objectListing = s3.listNextBatchOfObjects(objectListing);
             } else {
                 break;
             }
         }
-        VersionListing versionListing = s3.listVersions(new ListVersionsRequest().withBucketName(name));
-        while (true) {
-            versionListing.getVersionSummaries().forEach((vs) -> s3.deleteVersion(name, vs.getKey(), vs.getVersionId()));
-            if (versionListing.isTruncated()) {
-                versionListing = s3.listNextBatchOfVersions(versionListing);
-            } else {
-                break;
-            }
-        }
+        return count;
     }
 
-    protected final void deleteBucket(final String name) {
+    protected final void deleteBucket(final Context context, final String name) {
         if (Config.get(Config.Key.DELETION_POLICY).equals("delete")) {
-            this.emptyBucket(name);
-            this.s3.deleteBucket(new DeleteBucketRequest(name));
+            if (Config.get(Config.Key.FAILURE_POLICY).equals("retain") && context.hasFailure()) {
+                System.out.println("Skip bucket deletion because of stack failure in context and FAILURE_POLICY := retain");
+            } else {
+                this.emptyBucket(context, name);
+                this.s3.deleteBucket(new DeleteBucketRequest(name));
+            }
         }
     }
 
@@ -179,6 +209,10 @@ public abstract class AAWSTest extends ATest {
 
     protected final String getAccount() {
         return this.sts.getCallerIdentity(new GetCallerIdentityRequest()).getAccount();
+    }
+
+    protected final String getCallerIdentityArn() {
+        return this.sts.getCallerIdentity(new GetCallerIdentityRequest()).getArn();
     }
 
     protected final String random8String() {

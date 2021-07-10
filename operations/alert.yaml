@@ -29,19 +29,19 @@ Metadata:
       - FallbackEmail
 Parameters:
   Email:
-    Description: 'Optional email address that will receive alerts'
+    Description: 'Optional email address that will receive alerts.'
     Type: String
     Default: ''
   HttpEndpoint:
-    Description: 'Optional HTTP endpoint that will receive alerts via POST requests'
+    Description: 'Optional HTTP endpoint that will receive alerts via POST requests.'
     Type: String
     Default: ''
   HttpsEndpoint:
-    Description: 'Optional HTTPS endpoint that will receive alerts via POST requests (can be a marbot.io endpoint)'
+    Description: 'Optional HTTPS endpoint that will receive alerts via POST requests (e.g., a marbot.io endpoint for incident management in Slack).'
     Type: String
     Default: ''
   FallbackEmail:
-    Description: 'Optional email address that will receive alerts if alerts can not be delivered'
+    Description: 'Optional email address that will receive alerts if alerts can not be delivered.'
     Type: String
     Default: ''
 Conditions:
@@ -68,6 +68,8 @@ Resources:
             - 'budgets.amazonaws.com' # Allow Budget Notifications
             - 'rds.amazonaws.com' # Allow RDS Events
             - 's3.amazonaws.com' # Allow S3 Event Notifications
+            - 'backup.amazonaws.com' # Allow Backup Events
+            - 'codestar-notifications.amazonaws.com' # Allow CodeStart Notifications
           Action: 'sns:Publish'
           Resource: !Ref Topic
         - Sid: Sid2
@@ -109,6 +111,7 @@ Resources:
       Dimensions:
       - Name: TopicName
         Value: !GetAtt Topic.TopicName
+      TreatMissingData: notBreaching
   EmailSubscription:
     Condition: HasEmail
     Type: 'AWS::SNS::Subscription'
@@ -120,6 +123,15 @@ Resources:
     Condition: HasHttpEndpoint
     Type: 'AWS::SNS::Subscription'
     Properties:
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          minDelayTarget: 1
+          maxDelayTarget: 60
+          numRetries: 100
+          numNoDelayRetries: 0
+          backoffFunction: exponential
+        throttlePolicy:
+          maxReceivesPerSecond: 1
       Endpoint: !Ref HttpEndpoint
       Protocol: http
       TopicArn: !Ref Topic
@@ -127,6 +139,15 @@ Resources:
     Condition: HasHttpsEndpoint
     Type: 'AWS::SNS::Subscription'
     Properties:
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          minDelayTarget: 1
+          maxDelayTarget: 60
+          numRetries: 100
+          numNoDelayRetries: 0
+          backoffFunction: exponential
+        throttlePolicy:
+          maxReceivesPerSecond: 1
       Endpoint: !Ref HttpsEndpoint
       Protocol: https
       TopicArn: !Ref Topic
@@ -152,3 +173,8 @@ Outputs:
     Value: !Ref Topic
     Export:
       Name: !Sub '${AWS::StackName}-TopicARN'
+  TopicName:
+    Description: 'The name of the alert topic.'
+    Value: !GetAtt 'Topic.TopicName'
+    Export:
+      Name: !Sub '${AWS::StackName}-TopicName'

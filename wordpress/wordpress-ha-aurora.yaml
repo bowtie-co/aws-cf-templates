@@ -24,11 +24,13 @@ Metadata:
       - ParentSSHBastionStack
       - ParentAuthProxyStack
       - ParentAlertStack
+      - ParentS3StackAccessLog
       - ParentZoneStack
+      - ParentWAFStack
     - Label:
         default: 'Domain Name and SSL certificates'
       Parameters:
-      - DomainName
+      - SubDomainNameWithDot
       - CloudFrontAcmCertificate
       - ElbAcmCertificate
     - Label:
@@ -43,20 +45,36 @@ Metadata:
       Parameters:
       - WebServerKeyName
       - WebServerIAMUserSSHAccess
+      - WebServerSystemsManagerAccess
       - WebServerInstanceType
       - WebServerLogsRetentionInDays
-      - SubDomainName
+      - ManagedPolicyArns
+    - Label:
+        default: 'EFS Parameters'
+      Parameters:
+      - EFSProvisionedThroughputInMibps
+      - EFSBackupRetentionPeriod
+      - EFSBackupScheduleExpression
     - Label:
         default: 'Database Parameters'
       Parameters:
       - DBServerInstanceType
       - DBBackupRetentionPeriod
+      - DBMasterUserPassword
+    - Label:
+        default: 'Load Balancer Parameters'
+      Parameters:
+      - LoadBalancerIdleTimeout
+    - Label:
+        default: 'Permission Parameters'
+      Parameters:
+      - PermissionsBoundary
 Parameters:
   ParentVPCStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
     Type: String
   ParentSSHBastionStack:
-    Description: 'Optional but recommended stack name of parent SSH bastion host/instance stack based on vpc/vpc-ssh-bastion.yaml template.'
+    Description: 'Optional but recommended stack name of parent SSH bastion host/instance stack based on vpc/vpc-*-bastion.yaml template.'
     Type: String
     Default: ''
   ParentAuthProxyStack:
@@ -67,18 +85,26 @@ Parameters:
     Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
     Type: String
     Default: ''
-  ParentZoneStack:
-    Description: 'Optional stack name of parent zone stack based on vpc/zone-*.yaml template.'
+  ParentS3StackAccessLog:
+    Description: 'Optional stack name of parent s3 stack based on state/s3.yaml template (with Access set to ElbAccessLogWrite) to store access logs.'
     Type: String
     Default: ''
-  DomainName:
-    Description: 'The primary domain name of the blog.'
+  ParentZoneStack:
+    Description: 'Stack name of parent zone stack based on vpc/zone-*.yaml template.'
     Type: String
+  ParentWAFStack:
+    Description: 'Optional stack name of parent WAF stack based on the security/waf.yaml template.'
+    Type: String
+    Default: ''
+  PermissionsBoundary:
+    Description: 'Optional ARN for a policy that will be used as the permission boundary for all roles created by this template.'
+    Type: String
+    Default: ''
   CloudFrontAcmCertificate:
-    Description: 'The ACM Certificate ARN of certificate for the CloudFront distribution.Must be created in the us-east-1 region!'
+    Description: 'The ACM Certificate ARN for the CloudFront distribution. Must be created in the us-east-1 region!'
     Type: String
   ElbAcmCertificate:
-    Description: 'The ACM Certificate ARN of certificate for the ELB. Must be created in the same region as this stack!'
+    Description: 'The ACM Certificate ARN for the ELB. Must be created in the same region as this stack!'
     Type: String
   BlogTitle:
     Description: 'The title of the WordPress blog.'
@@ -97,10 +123,6 @@ Parameters:
   BlogAdminEMail:
     Description: 'The email address of the WordPress admin.'
     Type: String
-  BlogVersion:
-    Description: 'WordPress version number'
-    Type: String
-    Default: '4.9.6'
   WebServerKeyName:
     Description: 'Optional key pair of the ec2-user to establish a SSH connection to the web server.'
     Type: String
@@ -109,6 +131,13 @@ Parameters:
     Description: 'Synchronize public keys of IAM users to enable personalized SSH access (Doc: https://cloudonaut.io/manage-aws-ec2-ssh-access-with-iam/).'
     Type: String
     Default: false
+    AllowedValues:
+    - true
+    - false
+  WebServerSystemsManagerAccess:
+    Description: 'Enable AWS Systems Manager agent and authorization.'
+    Type: String
+    Default: true
     AllowedValues:
     - true
     - false
@@ -121,6 +150,24 @@ Parameters:
     Type: Number
     Default: 14
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+  ManagedPolicyArns:
+    Description: 'Optional comma-delimited list of IAM managed policy ARNs to attach to the instance''s IAM role'
+    Type: String
+    Default: ''
+  EFSProvisionedThroughputInMibps:
+    Description: 'The provisioned throughput for the Elastic File System (EFS) in Mibps. Default is 0 which enables the bursting mode and disables provisioned throughput.'
+    Type: Number
+    Default: 0
+  EFSBackupRetentionPeriod:
+    Description: 'The number of days to keep backups of the EFS file system (set to 0 to disable).'
+    Type: Number
+    MinValue: 0
+    MaxValue: 35
+    Default: 30
+  EFSBackupScheduleExpression:
+    Description: 'A CRON expression specifying when AWS Backup initiates a backup job.'
+    Type: String
+    Default: 'cron(0 5 ? * * *)'
   DBServerInstanceType:
     Description: 'The instance type of database server (e.g. db.t2.small).'
     Type: String
@@ -129,51 +176,85 @@ Parameters:
     Description: 'The number of days to keep snapshots of the database.'
     Type: Number
     Default: 30
-  SubDomainName:
-    Description: 'Name that is used to create the DNS entry ${SubDomainName}.${HostedZoneName} (required when ParentZoneStack is set, otherwise not considered)'
+  DBMasterUserPassword:
+    Description: 'The master password for the DB instance. Must not be changed!'
     Type: String
-    Default: 'www'
+    Default: wordpress
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 32
+  SubDomainNameWithDot:
+    Description: 'Name that is used to create the DNS entry with trailing dot, e.g. §{SubDomainNameWithDot}§{HostedZoneName}. Leave blank for naked (or apex and bare) domain.'
+    Type: String
+    Default: 'www.'
+  LoadBalancerIdleTimeout:
+    Description: 'The idle timeout value, in seconds.'
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 4000
 Mappings:
   RegionMap:
+    'af-south-1':
+      AMI: 'ami-0a797f6e4448b3b6f'
+    'eu-north-1':
+      AMI: 'ami-0865a7423ddc6317c'
     'ap-south-1':
-      AMI: 'ami-76d6f519'
+      AMI: 'ami-011c99152163a87ae'
     'eu-west-3':
-      AMI: 'ami-969c2deb'
+      AMI: 'ami-0b2f05cf909299b7c'
     'eu-west-2':
-      AMI: 'ami-a36f8dc4'
+      AMI: 'ami-033af134328c47f48'
+    'eu-south-1':
+      AMI: 'ami-0512b7a96307ce5c4'
     'eu-west-1':
-      AMI: 'ami-ca0135b3'
+      AMI: 'ami-0f89681a05a3a9de7'
+    'ap-northeast-3':
+      AMI: 'ami-09965f96c50f5a3d4'
     'ap-northeast-2':
-      AMI: 'ami-c10fa6af'
+      AMI: 'ami-086a3601cd7a83590'
+    'me-south-1':
+      AMI: 'ami-0a0ee2492a9f81d76'
     'ap-northeast-1':
-      AMI: 'ami-92df37ed'
+      AMI: 'ami-06631ebafb3ae5d34'
     'sa-east-1':
-      AMI: 'ami-3885d854'
+      AMI: 'ami-0113db2202e3b45a5'
     'ca-central-1':
-      AMI: 'ami-338a0a57'
+      AMI: 'ami-07d95746fec4b20a3'
+    'ap-east-1':
+      AMI: 'ami-036fe7ba35d60224e'
     'ap-southeast-1':
-      AMI: 'ami-de90a5a2'
+      AMI: 'ami-018c1c51c7a13e363'
     'ap-southeast-2':
-      AMI: 'ami-423bec20'
+      AMI: 'ami-05064bb33b40c33a2'
     'eu-central-1':
-      AMI: 'ami-9a91b371'
+      AMI: 'ami-089b5384aac360007'
     'us-east-1':
-      AMI: 'ami-14c5486b'
+      AMI: 'ami-0ab4d1e9cf9a1215a'
     'us-east-2':
-      AMI: 'ami-922914f7'
+      AMI: 'ami-0277b52859bac6f4b'
     'us-west-1':
-      AMI: 'ami-25110f45'
+      AMI: 'ami-02f24ad9a1d24a799'
     'us-west-2':
-      AMI: 'ami-e251209a'
+      AMI: 'ami-0721c9af7b9b75114'
 Conditions:
+  HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundary, '']]
   HasKeyName: !Not [!Equals [!Ref WebServerKeyName, '']]
   HasIAMUserSSHAccess: !Equals [!Ref WebServerIAMUserSSHAccess, 'true']
+  HasSystemsManagerAccess: !Equals [!Ref WebServerSystemsManagerAccess, 'true']
   HasSSHBastionSecurityGroup: !Not [!Equals [!Ref ParentSSHBastionStack, '']]
   HasNotSSHBastionSecurityGroup: !Equals [!Ref ParentSSHBastionStack, '']
   HasAuthProxySecurityGroup: !Not [!Equals [!Ref ParentAuthProxyStack, '']]
   HasNotAuthProxySecurityGroup: !Equals [!Ref ParentAuthProxyStack, '']
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
-  HasZone: !Not [!Equals [!Ref ParentZoneStack, '']]
+  HasS3Bucket: !Not [!Equals [!Ref ParentS3StackAccessLog, '']]
+  HasEFSProvisionedThroughput: !Not [!Condition HasNotEFSProvisionedThroughput]
+  HasNotEFSProvisionedThroughput: !Equals [!Ref EFSProvisionedThroughputInMibps, '0']
+  HasAlertTopicAndEFSProvisionedThroughput: !And [!Condition HasAlertTopic, !Condition HasEFSProvisionedThroughput]
+  HasAlertTopicAndNotEFSProvisionedThroughput: !And [!Condition HasAlertTopic, !Condition HasNotEFSProvisionedThroughput]
+  HasManagedPolicyArns: !Not [!Equals [!Ref ManagedPolicyArns, '']]
+  HasEFSBackupRetentionPeriod: !Not [!Equals [!Ref EFSBackupRetentionPeriod, 0]]
+  HasWAF: !Not [!Equals [!Ref ParentWAFStack, '']]
 Resources:
   WebServerLogs:
     Type: 'AWS::Logs::LogGroup'
@@ -183,8 +264,7 @@ Resources:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: 'wordpress-elb'
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
   LoadBalancerSecurityGroupInWorld:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasNotAuthProxySecurityGroup
@@ -194,6 +274,15 @@ Resources:
       FromPort: 443
       ToPort: 443
       CidrIp: '0.0.0.0/0'
+  LoadBalancerSecurityGroupInWorldIPv6:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: HasNotAuthProxySecurityGroup
+    Properties:
+      GroupId: !Ref LoadBalancerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIpv6: '::/0'
   LoadBalancerSecurityGroupInAuthProxy:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasAuthProxySecurityGroup
@@ -202,14 +291,12 @@ Resources:
       IpProtocol: tcp
       FromPort: 80
       ToPort: 80
-      SourceSecurityGroupId:
-        'Fn::ImportValue': !Sub '${ParentAuthProxyStack}-SecurityGroup'
+      SourceSecurityGroupId: {'Fn::ImportValue': !Sub '${ParentAuthProxyStack}-SecurityGroup'}
   WebServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: 'wordpress-ec2'
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       SecurityGroupIngress:
       - FromPort: 80
         IpProtocol: tcp
@@ -223,8 +310,7 @@ Resources:
       IpProtocol: tcp
       FromPort: 22
       ToPort: 22
-      SourceSecurityGroupId:
-        'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'
+      SourceSecurityGroupId: {'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'}
   WebServerSecurityGroupInSSHWorld:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasNotSSHBastionSecurityGroup
@@ -238,8 +324,7 @@ Resources:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: 'wordpress-rds'
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       SecurityGroupIngress:
       - IpProtocol: tcp
         FromPort: 3306
@@ -253,8 +338,7 @@ Resources:
       IpProtocol: tcp
       FromPort: 3306
       ToPort: 3306
-      SourceSecurityGroupId:
-        'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'
+      SourceSecurityGroupId: {'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'}
   HTTPCodeELB5XXTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -268,10 +352,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   HTTPCodeTarget5XXTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -285,10 +370,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   RejectedConnectionCountTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -302,10 +388,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   TargetConnectionErrorCountTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -319,22 +406,39 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   LoadBalancer:
     Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
     Properties:
+      IpAddressType: dualstack
+      LoadBalancerAttributes:
+      - Key: 'idle_timeout.timeout_seconds'
+        Value: !Ref LoadBalancerIdleTimeout
+      - Key: 'routing.http2.enabled'
+        Value: 'true'
+      - Key: 'access_logs.s3.enabled'
+        Value: !If [HasS3Bucket, 'true', 'false']
+      - !If [HasS3Bucket, {Key: 'access_logs.s3.prefix', Value: !Ref 'AWS::StackName'}, !Ref 'AWS::NoValue']
+      - !If [HasS3Bucket, {Key: 'access_logs.s3.bucket', Value: {'Fn::ImportValue': !Sub '${ParentS3StackAccessLog}-BucketName'}}, !Ref 'AWS::NoValue']
       Subnets:
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPublic'
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'}
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'}
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPublic'}
       SecurityGroups:
       - !Ref LoadBalancerSecurityGroup
       Scheme: 'internet-facing'
+  WebACLAssociation:
+    Condition: HasWAF
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref LoadBalancer
+      WebACLArn: {'Fn::ImportValue': !Sub '${ParentWAFStack}-WebACL'}
   LoadBalancerListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
     Properties:
       DefaultActions:
       - Type: forward
@@ -344,12 +448,13 @@ Resources:
       Protocol: HTTPS
       Certificates:
       - CertificateArn: !Ref ElbAcmCertificate
+      SslPolicy: 'ELBSecurityPolicy-FS-1-2-Res-2019-08'
   LoadBalancerTargetGroup: # not monitored, but LoadBalancer is monitored!
     Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
     Properties:
       HealthCheckIntervalSeconds: 15
       HealthCheckPath: '/'
-      HealthCheckPort: 80
+      HealthCheckPort: '80'
       HealthCheckProtocol: HTTP
       HealthCheckTimeoutSeconds: 10
       HealthyThresholdCount: 2
@@ -358,20 +463,21 @@ Resources:
         HttpCode: '200-299'
       Port: 80
       Protocol: HTTP
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       TargetGroupAttributes:
       - Key: 'deregistration_delay.timeout_seconds'
-        Value: 30
+        Value: '30'
   DBSubnetGroup:
     Type: 'AWS::RDS::DBSubnetGroup'
     Properties:
       DBSubnetGroupDescription: 'DB subnet group'
       SubnetIds:
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPrivate'
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPrivate'
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPrivate'
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPrivate'}
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPrivate'}
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPrivate'}
   DatabaseCluster:
+    DeletionPolicy: Snapshot # default
+    UpdateReplacePolicy: Snapshot
     Type: 'AWS::RDS::DBCluster'
     Properties:
       BackupRetentionPeriod: !Ref DBBackupRetentionPeriod
@@ -379,7 +485,7 @@ Resources:
       DBSubnetGroupName: !Ref DBSubnetGroup
       Engine: aurora
       MasterUsername: wordpress
-      MasterUserPassword: wordpress
+      MasterUserPassword: !Ref DBMasterUserPassword
       VpcSecurityGroupIds:
       - !Ref DatabaseSecurityGroup
   DatabaseClusterBurstBalanceTooLowAlarm:
@@ -395,7 +501,7 @@ Resources:
       ComparisonOperator: LessThanThreshold
       Threshold: 20
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: DBClusterIdentifier
         Value: !Ref DatabaseCluster
@@ -412,7 +518,7 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 80
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: DBClusterIdentifier
         Value: !Ref DatabaseCluster
@@ -429,7 +535,7 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 64
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: DBClusterIdentifier
         Value: !Ref DatabaseCluster
@@ -446,7 +552,7 @@ Resources:
       ComparisonOperator: LessThanThreshold
       Threshold: 67108864 # 64 MB in Bytes
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: DBClusterIdentifier
         Value: !Ref DatabaseCluster
@@ -463,7 +569,7 @@ Resources:
       ComparisonOperator: LessThanThreshold
       Threshold: 2147483648 # 2 GB in Bytes
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: DBClusterIdentifier
         Value: !Ref DatabaseCluster
@@ -480,7 +586,7 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 268435456 # 256 MB in Bytes
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: DBClusterIdentifier
         Value: !Ref DatabaseCluster
@@ -501,7 +607,6 @@ Resources:
   WebServerInstanceProfile:
     Type: 'AWS::IAM::InstanceProfile'
     Properties:
-      Path: '/'
       Roles:
       - !Ref WebServerIAMRole
   WebServerIAMRole:
@@ -512,12 +617,24 @@ Resources:
         Statement:
         - Effect: Allow
           Principal:
-            Service:
-            - 'ec2.amazonaws.com'
-          Action:
-          - 'sts:AssumeRole'
-      Path: '/'
+            Service: 'ec2.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundary, !Ref 'AWS::NoValue']
+      ManagedPolicyArns: !If [HasManagedPolicyArns, !Split [',', !Ref ManagedPolicyArns], !Ref 'AWS::NoValue']
       Policies:
+      - !If
+        - HasSystemsManagerAccess
+        - PolicyName: ssm
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - 'ssmmessages:*' # SSM Agent by https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-setting-up-messageAPIs.html
+              - 'ssm:UpdateInstanceInformation' # SSM agent by https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-setting-up-messageAPIs.html
+              - 'ec2messages:*' # SSM Session Manager by https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-setting-up-messageAPIs.html
+              Resource: '*'
+        - !Ref 'AWS::NoValue'
       - PolicyName: logs
         PolicyDocument:
           Version: '2012-10-17'
@@ -528,8 +645,7 @@ Resources:
             - 'logs:CreateLogStream'
             - 'logs:PutLogEvents'
             - 'logs:DescribeLogStreams'
-            Resource:
-            - 'arn:aws:logs:*:*:*'
+            Resource: !GetAtt 'WebServerLogs.Arn'
   WebServerIAMPolicySSHAccess:
     Type: 'AWS::IAM::Policy'
     Condition: HasIAMUserSSHAccess
@@ -551,13 +667,13 @@ Resources:
           - 'iam:GetSSHPublicKey'
           Resource:
           - !Sub 'arn:aws:iam::${AWS::AccountId}:user/*'
-  LaunchConfiguration:
+  LaunchTemplate:
     DependsOn: [DatabaseA, DatabaseB]
-    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Type: 'AWS::EC2::LaunchTemplate'
     Metadata:
       'AWS::CloudFormation::Init':
         configSets:
-          default: !If [HasIAMUserSSHAccess, [awslogs, ssh-access, config], [awslogs, config]]
+          default: !If [HasIAMUserSSHAccess, [awslogs, ssh-access, mount, extras, config], [awslogs, mount, extras, config]]
         awslogs:
           packages:
             yum:
@@ -576,30 +692,28 @@ Resources:
               content: !Sub |
                 [general]
                 state_file = /var/lib/awslogs/agent-state
-                [/var/log/messages]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/messages
-                log_stream_name = {instance_id}/var/log/messages
-                log_group_name = ${WebServerLogs}
-                [/var/log/secure]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/secure
-                log_stream_name = {instance_id}/var/log/secure
-                log_group_name = ${WebServerLogs}
-                [/var/log/cron]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/cron
-                log_stream_name = {instance_id}/var/log/cron
-                log_group_name = ${WebServerLogs}
-                [/var/log/cloud-init.log]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/cloud-init.log
-                log_stream_name = {instance_id}/var/log/cloud-init.log
-                log_group_name = ${WebServerLogs}
-                [/var/log/cfn-init.log]
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
                 datetime_format = %Y-%m-%d %H:%M:%S
-                file = /var/log/cfn-init.log
-                log_stream_name = {instance_id}/var/log/cfn-init.log
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_stream_name = {instance_id}/var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/amazon/ssm/errors.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/ssm/errors.log
+                log_stream_name = {instance_id}/var/log/amazon/ssm/errors.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/audit/audit.log]
+                file = /var/log/audit/audit.log
+                log_stream_name = {instance_id}/var/log/audit/audit.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/awslogs.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/awslogs.log
+                log_stream_name = {instance_id}/var/log/awslogs.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/boot.log]
+                file = /var/log/boot.log
+                log_stream_name = {instance_id}/var/log/boot.log
                 log_group_name = ${WebServerLogs}
                 [/var/log/cfn-hup.log]
                 datetime_format = %Y-%m-%d %H:%M:%S
@@ -611,14 +725,73 @@ Resources:
                 file = /var/log/cfn-init-cmd.log
                 log_stream_name = {instance_id}/var/log/cfn-init-cmd.log
                 log_group_name = ${WebServerLogs}
+                [/var/log/cfn-init.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init.log
+                log_stream_name = {instance_id}/var/log/cfn-init.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/cfn-wire.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-wire.log
+                log_stream_name = {instance_id}/var/log/cfn-wire.log
+                log_group_name = ${WebServerLogs}
                 [/var/log/cloud-init-output.log]
                 file = /var/log/cloud-init-output.log
                 log_stream_name = {instance_id}/var/log/cloud-init-output.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/cloud-init.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cloud-init.log
+                log_stream_name = {instance_id}/var/log/cloud-init.log
+                log_group_name = ${WebServerLogs}
+                [/var/log/cron]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cron
+                log_stream_name = {instance_id}/var/log/cron
                 log_group_name = ${WebServerLogs}
                 [/var/log/dmesg]
                 file = /var/log/dmesg
                 log_stream_name = {instance_id}/var/log/dmesg
                 log_group_name = ${WebServerLogs}
+                [/var/log/grubby_prune_debug]
+                file = /var/log/grubby_prune_debug
+                log_stream_name = {instance_id}/var/log/grubby_prune_debug
+                log_group_name = ${WebServerLogs}
+                [/var/log/maillog]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/maillog
+                log_stream_name = {instance_id}/var/log/maillog
+                log_group_name = ${WebServerLogs}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}/var/log/messages
+                log_group_name = ${WebServerLogs}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}/var/log/secure
+                log_group_name = ${WebServerLogs}
+                [/var/log/yum.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/yum.log
+                log_stream_name = {instance_id}/var/log/yum.log
+                log_group_name = ${WebServerLogs}
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/awslogs/config/efs.conf':
+              content: !Sub |
+                [/var/log/amazon/efs/mount.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/efs/mount.log
+                log_stream_name = {instance_id}/var/log/amazon/efs/mount.log
+                log_group_name = ${WebServerLogs}
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/awslogs/config/httpd.conf':
+              content: !Sub |
                 [/var/log/httpd/access_log]
                 datetime_format = %b %d %H:%M:%S %Y
                 file = /var/log/httpd/access_log
@@ -634,7 +807,7 @@ Resources:
               group: root
           services:
             sysvinit:
-              awslogs:
+              awslogsd:
                 enabled: true
                 ensureRunning: true
                 packages:
@@ -643,6 +816,8 @@ Resources:
                 files:
                 - '/etc/awslogs/awslogs.conf'
                 - '/etc/awslogs/awscli.conf'
+                - '/etc/awslogs/config/efs.conf'
+                - '/etc/awslogs/config/httpd.conf'
         ssh-access:
           files:
             '/opt/authorized_keys_command.sh':
@@ -693,9 +868,11 @@ Resources:
               group: root
           commands:
             'a_configure_sshd_command':
-              command: 'sed -i "s:#AuthorizedKeysCommand none:AuthorizedKeysCommand /opt/authorized_keys_command.sh:g" /etc/ssh/sshd_config'
+              command: 'sed -e ''/AuthorizedKeysCommand / s/^#*/#/'' -i /etc/ssh/sshd_config; echo -e ''\nAuthorizedKeysCommand /opt/authorized_keys_command.sh'' >> /etc/ssh/sshd_config'
+              test: '! grep -q ''^AuthorizedKeysCommand /opt/authorized_keys_command.sh'' /etc/ssh/sshd_config'
             'b_configure_sshd_commanduser':
-              command: 'sed -i "s:#AuthorizedKeysCommandUser nobody:AuthorizedKeysCommandUser nobody:g" /etc/ssh/sshd_config'
+              command: 'sed -e ''/AuthorizedKeysCommandUser / s/^#*/#/'' -i /etc/ssh/sshd_config; echo -e ''\nAuthorizedKeysCommandUser nobody'' >> /etc/ssh/sshd_config'
+              test: '! grep -q ''^AuthorizedKeysCommandUser nobody'' /etc/ssh/sshd_config'
             'c_import_users':
               command: './import_users.sh'
               cwd: '/opt'
@@ -707,24 +884,54 @@ Resources:
                 commands:
                 - 'a_configure_sshd_command'
                 - 'b_configure_sshd_commanduser'
+        mount:
+          packages:
+            yum:
+              'amazon-efs-utils': []
+          commands:
+            'a_mount':
+              command: !Sub 'mkdir /var/www && echo "${EFSFileSystem}:/ /var/www efs tls,_netdev 0 0" >> /etc/fstab && while ! (echo > /dev/tcp/${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com/2049) >/dev/null 2>&1; do sleep 5; done && mount -a -t efs'
+              test: '[ ! -d /var/www ]'
+        extras:
+          commands:
+            'a_enable_php':
+              command: 'amazon-linux-extras enable php7.2 && yum -y clean metadata'
+              test: "! grep -Fxq '[amzn2extra-php7.2]' /etc/yum.repos.d/amzn2-extras.repo"
         config:
           packages:
             yum:
-              php70: []
-              php70-opcache: []
-              php70-mysqlnd: []
-              mysql56: []
-              httpd24: []
+              php: []
+              php-gd: []
+              php-opcache: []
+              php-mysqlnd: []
+              php-mbstring: []
+              php-xmlrpc: []
+              mariadb: []
+              httpd: []
           files:
             '/root/php.sh':
-              content: !Sub |
+              content: |
                 #!/bin/bash -ex
-                sed -i 's/;opcache.revalidate_freq=2/opcache.revalidate_freq=300/g' /etc/php-7.0.d/10-opcache.ini
+                sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php.ini
+                sed -i 's/max_input_time = 60/max_input_time = 300/' /etc/php.ini
+                sed -i 's/; max_input_vars = 1000/max_input_vars = 10000/' /etc/php.ini
+                sed -i 's/memory_limit = 128M/memory_limit = 512M/' /etc/php.ini
+                sed -i 's/post_max_size = 8M/post_max_size = 200M/' /etc/php.ini
+                sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 200M/' /etc/php.ini
+                sed -i 's/max_file_uploads = 20/max_file_uploads = 200/' /etc/php.ini
+
+                sed -i 's/opcache.memory_consumption=128/opcache.memory_consumption=256/g' /etc/php.d/10-opcache.ini
+                sed -i 's/opcache.interned_strings_buffer=8/opcache.interned_strings_buffer=16/g' /etc/php.d/10-opcache.ini
+                sed -i 's/opcache.max_accelerated_files=4000/opcache.max_accelerated_files=10000/g' /etc/php.d/10-opcache.ini
+                sed -i 's/;opcache.max_wasted_percentage=5/opcache.max_wasted_percentage=10/g' /etc/php.d/10-opcache.ini
+                sed -i 's/;opcache.validate_timestamps=1/opcache.validate_timestamps=1/g' /etc/php.d/10-opcache.ini
+                sed -i 's/;opcache.revalidate_freq=2/opcache.revalidate_freq=60/g' /etc/php.d/10-opcache.ini
+                sed -i 's/;opcache.fast_shutdown=0/opcache.fast_shutdown=0/g' /etc/php.d/10-opcache.ini
               mode: '000500'
               owner: root
               group: root
             '/etc/httpd/conf.d/wordpress.conf':
-              content: !Sub |
+              content: |
                 <Directory "/var/www/html">
                 Options Indexes FollowSymLinks
                 AllowOverride All
@@ -734,22 +941,33 @@ Resources:
               owner: root
               group: root
             '/root/wordpress.sh':
-              content: !Sub |
-                #!/bin/bash -ex
-                # ensure than only one machine installs wp
-                if mkdir /var/www/lock; then
-                  cd /var/www/html
-                  wget -q -T 60 https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
-                  if ! php wp-cli.phar core is-installed --allow-root; then
-                    php wp-cli.phar core download --allow-root --version=${BlogVersion}
-                    php wp-cli.phar core config --dbname='wordpress' --dbuser='wordpress' --dbpass='wordpress' --dbhost='${DatabaseCluster.Endpoint.Address}' --allow-root
-                    php wp-cli.phar core install --url='https://${DomainName}' --title='${BlogTitle}' --admin_user='${BlogAdminUsername}' --admin_password='${BlogAdminPassword}' --admin_email='${BlogAdminEMail}' --skip-email --allow-root
-                    sed -i "/$table_prefix = 'wp_';/a\$_SERVER['HTTPS'] = 'on';" /var/www/html/wp-config.php
+              content: !Sub
+              - |
+                  #!/bin/bash -ex
+                  # ensure than only one machine installs wp
+                  if mkdir /var/www/lock; then
+                    cd /var/www/html
+                    wget --quiet --timeout=60 --output-document=wp-cli.phar https://github.com/wp-cli/wp-cli/releases/download/v2.5.0/wp-cli-2.5.0.phar
+                    if ! php wp-cli.phar core is-installed --allow-root; then
+                      php wp-cli.phar core download --allow-root --version=5.7.2
+                      php wp-cli.phar core config --dbname='wordpress' --dbuser='wordpress' --dbpass='${DBMasterUserPassword}' --dbhost='${DBHost}' --allow-root
+                      php wp-cli.phar core install --url='https://${DomainName}' --title='${BlogTitle}' --admin_user='${BlogAdminUsername}' --admin_password='${BlogAdminPassword}' --admin_email='${BlogAdminEMail}' --skip-email --allow-root
+                      sed -i "/$table_prefix = 'wp_';/a\$_SERVER['HTTPS'] = 'on';" /var/www/html/wp-config.php
+                    fi
+                    chown -R apache:apache /var/www/html
+                    chmod u+wrx /var/www/html/wp-content/*
+                    rm -f wp-cli.phar
                   fi
-                  chown -R apache:apache /var/www/html
-                  chmod u+wrx /var/www/html/wp-content/*
-                  rm wp-cli.phar
-                fi
+              - BlogTitle: !Ref BlogTitle
+                BlogAdminUsername: !Ref BlogAdminUsername
+                BlogAdminPassword: !Ref BlogAdminPassword
+                BlogAdminEMail: !Ref BlogAdminEMail
+                DBMasterUserPassword: !Ref DBMasterUserPassword
+                DBHost: !GetAtt 'DatabaseCluster.Endpoint.Address'
+                DomainName: !Sub
+                - '${SubDomainNameWithDot}${HostedZoneName}'
+                - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+                  HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
               mode: '000500'
               owner: root
               group: root
@@ -765,24 +983,34 @@ Resources:
               httpd:
                 enabled: true
                 ensureRunning: true
+              amazon-ssm-agent:
+                enabled: !If [HasSystemsManagerAccess, true, false]
+                ensureRunning: !If [HasSystemsManagerAccess, true, false]
     Properties:
-      AssociatePublicIpAddress: true
-      IamInstanceProfile: !Ref WebServerInstanceProfile
-      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
-      InstanceType: !Ref WebServerInstanceType
-      SecurityGroups:
-      - !Ref WebServerSecurityGroup
-      KeyName: !If [HasKeyName, !Ref WebServerKeyName, !Ref 'AWS::NoValue']
-      UserData:
-        'Fn::Base64': !Sub |
-          #!/bin/bash -ex
-          trap '/opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}' ERR
-          while ! nc -z ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com 2049; do sleep 10; done
-          sleep 10
-          mkdir /var/www
-          mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/" /var/www/
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfiguration --region ${AWS::Region}
-          /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+      LaunchTemplateData:
+        BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            Encrypted: true
+            VolumeType: gp3
+        IamInstanceProfile:
+          Name: !Ref WebServerInstanceProfile
+        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        InstanceType: !Ref WebServerInstanceType
+        KeyName: !If [HasKeyName, !Ref WebServerKeyName, !Ref 'AWS::NoValue']
+        MetadataOptions:
+          HttpTokens: required
+        NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          Groups:
+          - !Ref WebServerSecurityGroup
+        UserData:
+          'Fn::Base64': !Sub |
+            #!/bin/bash -ex
+            trap '/opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}' ERR
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchTemplate --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
   AutoScalingGroup:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
     DependsOn:
@@ -792,25 +1020,25 @@ Resources:
     Properties:
       TargetGroupARNs:
       - !Ref LoadBalancerTargetGroup
-      LaunchConfigurationName: !Ref LaunchConfiguration
-      MinSize: 2
-      MaxSize: 4
-      DesiredCapacity: 2
-      Cooldown: 60
-      HealthCheckGracePeriod: 300
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt 'LaunchTemplate.LatestVersionNumber'
+      MinSize: '2'
+      MaxSize: '4'
+      Cooldown: '60'
+      HealthCheckGracePeriod: 600 # needs to be in sync with CreationPolicy/UpdatePolicy timeout
       HealthCheckType: ELB
       NotificationConfigurations: !If
       - HasAlertTopic
       - - NotificationTypes:
           - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
           - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
-          TopicARN:
-            'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
-      - !Ref 'AWS::NoValue'
+          TopicARN: {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
+      - []
       VPCZoneIdentifier:
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'
-      - 'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPublic'
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'}
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'}
+      - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPublic'}
       Tags:
       - PropagateAtLaunch: true
         Value: wordpress
@@ -841,7 +1069,7 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 80
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: AutoScalingGroupName
         Value: !Ref AutoScalingGroup
@@ -851,7 +1079,7 @@ Resources:
       AdjustmentType: PercentChangeInCapacity
       MinAdjustmentMagnitude: 1
       AutoScalingGroupName: !Ref AutoScalingGroup
-      Cooldown: 900
+      Cooldown: '900'
       ScalingAdjustment: 25
   CPUHighAlarm:
     Type: 'AWS::CloudWatch::Alarm'
@@ -875,7 +1103,7 @@ Resources:
       AdjustmentType: PercentChangeInCapacity
       MinAdjustmentMagnitude: 1
       AutoScalingGroupName: !Ref AutoScalingGroup
-      Cooldown: 300
+      Cooldown: '300'
       ScalingAdjustment: -25
   CPULowAlarm:
     Type: 'AWS::CloudWatch::Alarm'
@@ -894,102 +1122,192 @@ Resources:
       ComparisonOperator: LessThanThreshold
       MetricName: CPUUtilization
   EFSFileSystem:
-    Type: AWS::EFS::FileSystem
+    Type: 'AWS::EFS::FileSystem'
     Properties:
+      ThroughputMode: !If [HasEFSProvisionedThroughput, 'provisioned', 'bursting']
+      ProvisionedThroughputInMibps: !If [HasEFSProvisionedThroughput, !Ref EFSProvisionedThroughputInMibps, !Ref 'AWS::NoValue']
       FileSystemTags:
       - Key: Name
         Value: !Sub '${AWS::StackName}-efs'
-  EFSFileSystemPercentIOLimitTooHighAlarm:
-    Condition: HasAlertTopic
-    Type: 'AWS::CloudWatch::Alarm'
-    Properties:
-      AlarmDescription: 'Average IO utilization over last 10 minutes higher than 80%'
-      Namespace: 'AWS/EFS'
-      MetricName: PercentIOLimit
-      Statistic: Average
-      Period: 600
-      EvaluationPeriods: 1
-      ComparisonOperator: GreaterThanThreshold
-      Threshold: 80
-      AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
-      Dimensions:
-      - Name: FileSystemId
-        Value: !Ref EFSFileSystem
   EFSFileSystemBurstCreditBalanceTooLowAlarm:
-    Condition: HasAlertTopic
+    Condition: HasAlertTopicAndNotEFSProvisionedThroughput
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
-      AlarmDescription: 'EFS file system is running out of burst credits. You can expect a significant performance drop in the next hour.'
+      AlarmDescription: 'Average burst credit balance over last 10 minutes too low, expect a significant performance drop soon.'
       Namespace: 'AWS/EFS'
       MetricName: BurstCreditBalance
       Statistic: Average
       Period: 600
       EvaluationPeriods: 1
       ComparisonOperator: LessThanThreshold
-      Threshold: 192416666667 # 192 GB in Bytes (last hour where you can burst at 100 MB/sec)
+      Threshold: 192000000000 # 192 GB in Bytes (last hour where you can burst at 100 MB/sec)
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
+      Dimensions:
+      - Name: FileSystemId
+        Value: !Ref EFSFileSystem
+  EFSFileSystemPercentIOLimitTooHighAlarm:
+    Condition: HasAlertTopicAndNotEFSProvisionedThroughput
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'I/O limit has been reached, consider using Max I/O performance mode.'
+      Namespace: 'AWS/EFS'
+      MetricName: PercentIOLimit
+      Statistic: Maximum
+      Period: 600
+      EvaluationPeriods: 3
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 95
+      AlarmActions:
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
+      Dimensions:
+      - Name: FileSystemId
+        Value: !Ref EFSFileSystem
+  EFSFileSystemThroughputAlarm:
+    Condition: HasAlertTopicAndEFSProvisionedThroughput
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Reached 90% of the provisioned throughput over last 10 minutes.'
+      Namespace: 'AWS/EFS'
+      MetricName: TotalIOBytes
+      Statistic: Sum
+      Period: 600
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: !GetAtt MaxThroughputCalculator.Threshold
+      AlarmActions:
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: FileSystemId
         Value: !Ref EFSFileSystem
   EFSMountTargetA:
-    Type: AWS::EFS::MountTarget
+    Type: 'AWS::EFS::MountTarget'
     Properties:
       FileSystemId: !Ref EFSFileSystem
-      SubnetId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'
+      SubnetId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'}
       SecurityGroups:
       - !Ref EFSSecurityGroup
   EFSMountTargetB:
-    Type: AWS::EFS::MountTarget
+    Type: 'AWS::EFS::MountTarget'
     Properties:
       FileSystemId: !Ref EFSFileSystem
-      SubnetId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'
+      SubnetId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'}
       SecurityGroups:
       - !Ref EFSSecurityGroup
   EFSMountTargetC:
-    Type: AWS::EFS::MountTarget
+    Type: 'AWS::EFS::MountTarget'
     Properties:
       FileSystemId: !Ref EFSFileSystem
-      SubnetId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPublic'
+      SubnetId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetCPublic'}
       SecurityGroups:
       - !Ref EFSSecurityGroup
   EFSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
+    Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: Allowing access to EFS
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       SecurityGroupIngress:
       - IpProtocol: tcp
         FromPort: 2049
         ToPort: 2049
         SourceSecurityGroupId: !Ref WebServerSecurityGroup
+  LambdaRole:
+    Condition: HasEFSProvisionedThroughput
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundary, !Ref 'AWS::NoValue']
+  LambdaPolicy:
+    Condition: HasEFSProvisionedThroughput
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      Roles:
+      - !Ref LambdaRole
+      PolicyName: lambda
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - 'logs:CreateLogStream'
+          - 'logs:PutLogEvents'
+          Resource: !GetAtt 'LambdaLogGroup.Arn'
+  LambdaFunction: # needs no monitoring because it is used as a custom resource
+    Condition: HasEFSProvisionedThroughput
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        ZipFile: |
+          'use strict';
+          const response = require('cfn-response');
+          exports.handler = (event, context, cb) => {
+            const throughput = parseInt(event.ResourceProperties.ThroughputInMibps, 10);
+            const threshold = Math.round(throughput * 1048576 * 600 * 0.9);
+            response.send(event, context, response.SUCCESS, {Threshold: threshold});
+          };
+      Handler: 'index.handler'
+      MemorySize: 128
+      Role: !GetAtt 'LambdaRole.Arn'
+      Runtime: 'nodejs12.x'
+      Timeout: 60
+  LambdaLogGroup:
+    Condition: HasEFSProvisionedThroughput
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LambdaFunction}'
+      RetentionInDays: !Ref WebServerLogsRetentionInDays
+  MaxThroughputCalculator:
+    Condition: HasEFSProvisionedThroughput
+    Type: 'Custom::MaxThroughputCalculator'
+    DependsOn:
+    - LambdaLogGroup
+    - LambdaPolicy
+    Version: '1.0'
+    Properties:
+      ThroughputInMibps: !Ref EFSProvisionedThroughputInMibps
+      ServiceToken: !GetAtt 'LambdaFunction.Arn'
   RecordSet:
-    Condition: HasZone
     Type: 'AWS::Route53::RecordSet'
     Properties:
       AliasTarget:
         HostedZoneId: Z2FDTNDATAQYW2 # Magic CloudFront number
         DNSName: !GetAtt 'CloudFrontDistribution.DomainName'
-      HostedZoneId:
-        'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'
+      HostedZoneId: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'}
       Name: !Sub
-      - '${SubDomainName}.${HostedZoneName}'
-      - SubDomainName: !Ref SubDomainName
-        HostedZoneName:
-          'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'
+      - '${SubDomainNameWithDot}${HostedZoneName}'
+      - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+        HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
       Type: A
+  RecordSetIPv6:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2 # Magic CloudFront number
+        DNSName: !GetAtt 'CloudFrontDistribution.DomainName'
+      HostedZoneId: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'}
+      Name: !Sub
+      - '${SubDomainNameWithDot}${HostedZoneName}'
+      - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+        HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
+      Type: AAAA
   CloudFrontDistribution:
     Type: 'AWS::CloudFront::Distribution'
     Properties:
       DistributionConfig:
         Aliases:
-        - !Ref DomainName
-        Comment: !Ref DomainName
+        - !Sub
+          - '${SubDomainNameWithDot}${HostedZoneName}'
+          - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+            HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
+        Comment: !Sub
+        - '${SubDomainNameWithDot}${HostedZoneName}'
+        - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+          HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
         Origins:
         - DomainName: !GetAtt 'LoadBalancer.DNSName'
           Id: elb
@@ -1058,11 +1376,64 @@ Resources:
           Compress: true
         Enabled: true
         HttpVersion: http2
+        IPV6Enabled: true
         PriceClass: 'PriceClass_All'
         ViewerCertificate:
           AcmCertificateArn: !Ref CloudFrontAcmCertificate
           SslSupportMethod: 'sni-only'
           MinimumProtocolVersion: TLSv1
+  BackupVault: # cannot be deleted with data
+    Condition: HasEFSBackupRetentionPeriod
+    Type: 'AWS::Backup::BackupVault'
+    Properties:
+      BackupVaultName: !Ref 'AWS::StackName'
+      Notifications: !If [HasAlertTopic, {BackupVaultEvents: [BACKUP_JOB_STARTED, BACKUP_JOB_COMPLETED, RESTORE_JOB_STARTED, RESTORE_JOB_COMPLETED, RECOVERY_POINT_MODIFIED], SNSTopicArn: {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}}, !Ref 'AWS::NoValue']
+  BackupPlan:
+    Condition: HasEFSBackupRetentionPeriod
+    Type: 'AWS::Backup::BackupPlan'
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Ref 'AWS::StackName'
+        BackupPlanRule:
+        - CompletionWindowMinutes: 1440
+          Lifecycle:
+            DeleteAfterDays: !Ref EFSBackupRetentionPeriod
+          RuleName: !Ref 'AWS::StackName'
+          ScheduleExpression: !Ref EFSBackupScheduleExpression
+          StartWindowMinutes: 60
+          TargetBackupVault: !Ref BackupVault
+  BackupRole:
+    Condition: HasEFSBackupRetentionPeriod
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'backup.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundary, !Ref 'AWS::NoValue']
+      Policies:
+      - PolicyName: backup
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'elasticfilesystem:Backup'
+            - 'elasticfilesystem:DescribeTags'
+            Resource: !Sub 'arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EFSFileSystem}'
+  BackupSelection:
+    Condition: HasEFSBackupRetentionPeriod
+    Type: 'AWS::Backup::BackupSelection'
+    Properties:
+      BackupPlanId: !Ref BackupPlan
+      BackupSelection:
+        IamRoleArn: !GetAtt 'BackupRole.Arn'
+        Resources:
+        - !Sub 'arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EFSFileSystem}'
+        SelectionName: !Ref 'AWS::StackName'
 Outputs:
   TemplateID:
     Description: 'cloudonaut.io template id.'

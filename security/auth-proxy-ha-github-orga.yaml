@@ -23,6 +23,7 @@ Metadata:
       - ParentVPCStack
       - ParentSSHBastionStack
       - ParentAlertStack
+      - ParentS3StackAccessLog
       - ParentZoneStack
     - Label:
         default: 'Proxy Parameters'
@@ -33,28 +34,47 @@ Metadata:
       - CertificateArn
       - Upstream
       - CookieSecret
+      - SkipAuthRegex
     - Label:
         default: 'EC2 Parameters'
       Parameters:
       - InstanceType
       - KeyName
       - IAMUserSSHAccess
+      - SystemsManagerAccess
       - LogsRetentionInDays
-      - SubDomainName
+      - SubDomainNameWithDot
+      - ManagedPolicyArns
+    - Label:
+        default: 'Load Balancer Parameters'
+      Parameters:
+      - LoadBalancerIdleTimeout
+    - Label:
+        default: 'Permission Parameters'
+      Parameters:
+      - PermissionsBoundary
 Parameters:
   ParentVPCStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
     Type: String
   ParentSSHBastionStack:
-    Description: 'Optional but recommended stack name of parent SSH bastion host/instance stack based on vpc/vpc-ssh-bastion.yaml template.'
+    Description: 'Optional but recommended stack name of parent SSH bastion host/instance stack based on vpc/vpc-*-bastion.yaml template.'
     Type: String
     Default: ''
   ParentAlertStack:
     Description: 'Optional but recommended stack name of parent alert stack based on operations/alert.yaml template.'
     Type: String
     Default: ''
+  ParentS3StackAccessLog:
+    Description: 'Optional stack name of parent s3 stack based on state/s3.yaml template (with Access set to ElbAccessLogWrite) to store access logs.'
+    Type: String
+    Default: ''
   ParentZoneStack:
     Description: 'Optional stack name of parent zone stack based on vpc/zone-*.yaml template.'
+    Type: String
+    Default: ''
+  PermissionsBoundary:
+    Description: 'Optional ARN for a policy that will be used as the permission boundary for all roles created by this template.'
     Type: String
     Default: ''
   CertificateArn:
@@ -68,6 +88,13 @@ Parameters:
     Description: 'Synchronize public keys of IAM users to enable personalized SSH access (Doc: https://cloudonaut.io/manage-aws-ec2-ssh-access-with-iam/).'
     Type: String
     Default: false
+    AllowedValues:
+    - true
+    - false
+  SystemsManagerAccess:
+    Description: 'Enable AWS Systems Manager agent and authorization.'
+    Type: String
+    Default: true
     AllowedValues:
     - true
     - false
@@ -97,49 +124,80 @@ Parameters:
     Description: 'Seed string for secure cookies. Create one with python -c ''import os,base64; print base64.b64encode(os.urandom(16))'''
     Type: String
     NoEcho: true
-  SubDomainName:
-    Description: 'Name that is used to create the DNS entry ${SubDomainName}.${HostedZoneName} (required when ParentZoneStack is set, otherwise not considered)'
+  SkipAuthRegex:
+    Description: 'Regex for path(s) which will be passed through the proxy without requiring Github authentication. The default is to require authentication for all paths.'
     Type: String
-    Default: 'jenkins'
+    Default: ''
+  SubDomainNameWithDot:
+    Description: 'Name that is used to create the DNS entry with trailing dot, e.g. §{SubDomainNameWithDot}§{HostedZoneName}. Leave blank for naked (or apex and bare) domain. Requires ParentZoneStack parameter!'
+    Type: String
+    Default: 'secure.'
+  ManagedPolicyArns:
+    Description: 'Optional comma-delimited list of IAM managed policy ARNs to attach to the instance''s IAM role'
+    Type: String
+    Default: ''
+  LoadBalancerIdleTimeout:
+    Description: 'The idle timeout value, in seconds.'
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 4000
 Mappings:
   RegionMap:
+    'af-south-1':
+      AMI: 'ami-0a797f6e4448b3b6f'
+    'eu-north-1':
+      AMI: 'ami-0865a7423ddc6317c'
     'ap-south-1':
-      AMI: 'ami-76d6f519'
+      AMI: 'ami-011c99152163a87ae'
     'eu-west-3':
-      AMI: 'ami-969c2deb'
+      AMI: 'ami-0b2f05cf909299b7c'
     'eu-west-2':
-      AMI: 'ami-a36f8dc4'
+      AMI: 'ami-033af134328c47f48'
+    'eu-south-1':
+      AMI: 'ami-0512b7a96307ce5c4'
     'eu-west-1':
-      AMI: 'ami-ca0135b3'
+      AMI: 'ami-0f89681a05a3a9de7'
+    'ap-northeast-3':
+      AMI: 'ami-09965f96c50f5a3d4'
     'ap-northeast-2':
-      AMI: 'ami-c10fa6af'
+      AMI: 'ami-086a3601cd7a83590'
+    'me-south-1':
+      AMI: 'ami-0a0ee2492a9f81d76'
     'ap-northeast-1':
-      AMI: 'ami-92df37ed'
+      AMI: 'ami-06631ebafb3ae5d34'
     'sa-east-1':
-      AMI: 'ami-3885d854'
+      AMI: 'ami-0113db2202e3b45a5'
     'ca-central-1':
-      AMI: 'ami-338a0a57'
+      AMI: 'ami-07d95746fec4b20a3'
+    'ap-east-1':
+      AMI: 'ami-036fe7ba35d60224e'
     'ap-southeast-1':
-      AMI: 'ami-de90a5a2'
+      AMI: 'ami-018c1c51c7a13e363'
     'ap-southeast-2':
-      AMI: 'ami-423bec20'
+      AMI: 'ami-05064bb33b40c33a2'
     'eu-central-1':
-      AMI: 'ami-9a91b371'
+      AMI: 'ami-089b5384aac360007'
     'us-east-1':
-      AMI: 'ami-14c5486b'
+      AMI: 'ami-0ab4d1e9cf9a1215a'
     'us-east-2':
-      AMI: 'ami-922914f7'
+      AMI: 'ami-0277b52859bac6f4b'
     'us-west-1':
-      AMI: 'ami-25110f45'
+      AMI: 'ami-02f24ad9a1d24a799'
     'us-west-2':
-      AMI: 'ami-e251209a'
+      AMI: 'ami-0721c9af7b9b75114'
 Conditions:
+  HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundary, '']]
   HasKeyName: !Not [!Equals [!Ref KeyName, '']]
   HasIAMUserSSHAccess: !Equals [!Ref IAMUserSSHAccess, 'true']
+  HasSystemsManagerAccess: !Equals [!Ref SystemsManagerAccess, 'true']
   HasSSHBastionSecurityGroup: !Not [!Equals [!Ref ParentSSHBastionStack, '']]
   HasNotSSHBastionSecurityGroup: !Equals [!Ref ParentSSHBastionStack, '']
   HasAlertTopic: !Not [!Equals [!Ref ParentAlertStack, '']]
+  HasS3Bucket: !Not [!Equals [!Ref ParentS3StackAccessLog, '']]
   HasZone: !Not [!Equals [!Ref ParentZoneStack, '']]
+  HasManagedPolicyArns: !Not [!Equals [!Ref ManagedPolicyArns, '']]
+  HasSkipAuthRegex: !Not [!Equals [!Ref SkipAuthRegex, '']]
 Resources:
   Logs:
     Type: 'AWS::Logs::LogGroup'
@@ -149,17 +207,24 @@ Resources:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: 'Auth proxy'
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       SecurityGroupIngress:
       - IpProtocol: tcp
         FromPort: 80
         ToPort: 80
         CidrIp: '0.0.0.0/0'
       - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIpv6: '::/0'
+      - IpProtocol: tcp
         FromPort: 443
         ToPort: 443
         CidrIp: '0.0.0.0/0'
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIpv6: '::/0'
   HTTPCodeELB5XXTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -173,10 +238,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   HTTPCodeTarget5XXTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -190,10 +256,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   RejectedConnectionCountTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -207,10 +274,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   TargetConnectionErrorCountTooHighAlarm:
     Condition: HasAlertTopic
     Type: 'AWS::CloudWatch::Alarm'
@@ -224,10 +292,11 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 0
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: LoadBalancer
         Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
   RecordSet:
     Condition: HasZone
     Type: 'AWS::Route53::RecordSet'
@@ -235,24 +304,42 @@ Resources:
       AliasTarget:
         HostedZoneId: !GetAtt 'LoadBalancer.CanonicalHostedZoneID'
         DNSName: !GetAtt 'LoadBalancer.DNSName'
-      HostedZoneId:
-        'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'
+      HostedZoneId: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'}
       Name: !Sub
-      - '${SubDomainName}.${HostedZoneName}'
-      - SubDomainName: !Ref SubDomainName
-        HostedZoneName:
-          'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'
+      - '${SubDomainNameWithDot}${HostedZoneName}'
+      - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+        HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
       Type: A
+  RecordSetIPv6:
+    Condition: HasZone
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      AliasTarget:
+        HostedZoneId: !GetAtt 'LoadBalancer.CanonicalHostedZoneID'
+        DNSName: !GetAtt 'LoadBalancer.DNSName'
+      HostedZoneId: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'}
+      Name: !Sub
+      - '${SubDomainNameWithDot}${HostedZoneName}'
+      - SubDomainNameWithDot: !Ref SubDomainNameWithDot
+        HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
+      Type: AAAA
   LoadBalancer:
     Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
     Properties:
+      IpAddressType: dualstack
+      LoadBalancerAttributes:
+      - Key: 'idle_timeout.timeout_seconds'
+        Value: !Ref LoadBalancerIdleTimeout
+      - Key: 'routing.http2.enabled'
+        Value: 'true'
+      - Key: 'access_logs.s3.enabled'
+        Value: !If [HasS3Bucket, 'true', 'false']
+      - !If [HasS3Bucket, {Key: 'access_logs.s3.prefix', Value: !Ref 'AWS::StackName'}, !Ref 'AWS::NoValue']
+      - !If [HasS3Bucket, {Key: 'access_logs.s3.bucket', Value: {'Fn::ImportValue': !Sub '${ParentS3StackAccessLog}-BucketName'}}, !Ref 'AWS::NoValue']
       Scheme: 'internet-facing'
       SecurityGroups:
       - !Ref LoadBalancerSecurityGroup
-      Subnets: !Split
-      - ','
-      - 'Fn::ImportValue':
-          !Sub '${ParentVPCStack}-SubnetsPublic'
+      Subnets: !Split [',', {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetsPublic'}]
       Tags:
       - Key: Name
         Value: 'Auth proxy'
@@ -261,7 +348,7 @@ Resources:
     Properties:
       HealthCheckIntervalSeconds: 15
       HealthCheckPath: '/ping'
-      HealthCheckPort: 4180
+      HealthCheckPort: '4180'
       HealthCheckProtocol: HTTP
       HealthCheckTimeoutSeconds: 10
       HealthyThresholdCount: 2
@@ -273,33 +360,10 @@ Resources:
       Tags:
       - Key: Name
         Value: 'Auth proxy'
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
       TargetGroupAttributes:
       - Key: 'deregistration_delay.timeout_seconds'
-        Value: 30
-  LoadBalancerTargetGroupHttpRedirect: # not monitored, but LoadBalancer is monitored!
-    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
-    Properties:
-      HealthCheckIntervalSeconds: 15
-      HealthCheckPath: '/'
-      HealthCheckPort: 80
-      HealthCheckProtocol: HTTP
-      HealthCheckTimeoutSeconds: 10
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 2
-      Matcher:
-        HttpCode: '200-299'
-      Port: 8080
-      Protocol: HTTP
-      Tags:
-      - Key: Name
-        Value: 'Auth proxy http redirect'
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
-      TargetGroupAttributes:
-      - Key: 'deregistration_delay.timeout_seconds'
-        Value: 30
+        Value: '30'
   LoadBalancerListener:
     Type: 'AWS::ElasticLoadBalancingV2::Listener'
     Properties:
@@ -311,12 +375,16 @@ Resources:
       LoadBalancerArn: !Ref LoadBalancer
       Port: 443
       Protocol: HTTPS
+      SslPolicy: 'ELBSecurityPolicy-FS-1-2-Res-2019-08'
   LoadBalancerListenerHttpRedirect:
     Type: 'AWS::ElasticLoadBalancingV2::Listener'
     Properties:
       DefaultActions:
-      - TargetGroupArn: !Ref LoadBalancerTargetGroupHttpRedirect
-        Type: forward
+      - RedirectConfig:
+          Port: '443'
+          Protocol: HTTPS
+          StatusCode: 'HTTP_301'
+        Type: redirect
       LoadBalancerArn: !Ref LoadBalancer
       Port: 80
       Protocol: HTTP
@@ -337,8 +405,7 @@ Resources:
         FromPort: 80
         ToPort: 80
         SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
-      VpcId:
-        'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
   SecurityGroupInSSHBastion:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasSSHBastionSecurityGroup
@@ -347,8 +414,7 @@ Resources:
       IpProtocol: tcp
       FromPort: 22
       ToPort: 22
-      SourceSecurityGroupId:
-        'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'
+      SourceSecurityGroupId: {'Fn::ImportValue': !Sub '${ParentSSHBastionStack}-SecurityGroup'}
   SecurityGroupInSSHWorld:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasNotSSHBastionSecurityGroup
@@ -361,7 +427,6 @@ Resources:
   InstanceProfile:
     Type: 'AWS::IAM::InstanceProfile'
     Properties:
-      Path: '/'
       Roles:
       - !Ref IAMRole
   IAMRole:
@@ -372,12 +437,24 @@ Resources:
         Statement:
         - Effect: Allow
           Principal:
-            Service:
-            - 'ec2.amazonaws.com'
-          Action:
-          - 'sts:AssumeRole'
-      Path: /
+            Service: 'ec2.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      ManagedPolicyArns: !If [HasManagedPolicyArns, !Split [',', !Ref ManagedPolicyArns], !Ref 'AWS::NoValue']
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundary, !Ref 'AWS::NoValue']
       Policies:
+      - !If
+        - HasSystemsManagerAccess
+        - PolicyName: ssm
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - 'ssmmessages:*' # SSM Agent by https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-setting-up-messageAPIs.html
+              - 'ssm:UpdateInstanceInformation' # SSM agent by https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-setting-up-messageAPIs.html
+              - 'ec2messages:*' # SSM Session Manager by https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-setting-up-messageAPIs.html
+              Resource: '*'
+        - !Ref 'AWS::NoValue'
       - PolicyName: logs
         PolicyDocument:
           Version: '2012-10-17'
@@ -388,8 +465,7 @@ Resources:
             - 'logs:CreateLogStream'
             - 'logs:PutLogEvents'
             - 'logs:DescribeLogStreams'
-            Resource:
-            - 'arn:aws:logs:*:*:*'
+            Resource: !GetAtt 'Logs.Arn'
   IAMPolicySSHAccess:
     Type: 'AWS::IAM::Policy'
     Condition: HasIAMUserSSHAccess
@@ -411,8 +487,8 @@ Resources:
           - 'iam:GetSSHPublicKey'
           Resource:
           - !Sub 'arn:aws:iam::${AWS::AccountId}:user/*'
-  LaunchConfiguration:
-    Type: 'AWS::AutoScaling::LaunchConfiguration'
+  LaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
     Metadata:
       'AWS::CloudFormation::Init':
         configSets:
@@ -435,30 +511,28 @@ Resources:
               content: !Sub |
                 [general]
                 state_file = /var/lib/awslogs/agent-state
-                [/var/log/messages]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/messages
-                log_stream_name = {instance_id}/var/log/messages
-                log_group_name = ${Logs}
-                [/var/log/secure]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/secure
-                log_stream_name = {instance_id}/var/log/secure
-                log_group_name = ${Logs}
-                [/var/log/cron]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/cron
-                log_stream_name = {instance_id}/var/log/cron
-                log_group_name = ${Logs}
-                [/var/log/cloud-init.log]
-                datetime_format = %b %d %H:%M:%S
-                file = /var/log/cloud-init.log
-                log_stream_name = {instance_id}/var/log/cloud-init.log
-                log_group_name = ${Logs}
-                [/var/log/cfn-init.log]
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
                 datetime_format = %Y-%m-%d %H:%M:%S
-                file = /var/log/cfn-init.log
-                log_stream_name = {instance_id}/var/log/cfn-init.log
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_stream_name = {instance_id}/var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = ${Logs}
+                [/var/log/amazon/ssm/errors.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/amazon/ssm/errors.log
+                log_stream_name = {instance_id}/var/log/amazon/ssm/errors.log
+                log_group_name = ${Logs}
+                [/var/log/audit/audit.log]
+                file = /var/log/audit/audit.log
+                log_stream_name = {instance_id}/var/log/audit/audit.log
+                log_group_name = ${Logs}
+                [/var/log/awslogs.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/awslogs.log
+                log_stream_name = {instance_id}/var/log/awslogs.log
+                log_group_name = ${Logs}
+                [/var/log/boot.log]
+                file = /var/log/boot.log
+                log_stream_name = {instance_id}/var/log/boot.log
                 log_group_name = ${Logs}
                 [/var/log/cfn-hup.log]
                 datetime_format = %Y-%m-%d %H:%M:%S
@@ -470,29 +544,64 @@ Resources:
                 file = /var/log/cfn-init-cmd.log
                 log_stream_name = {instance_id}/var/log/cfn-init-cmd.log
                 log_group_name = ${Logs}
+                [/var/log/cfn-init.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init.log
+                log_stream_name = {instance_id}/var/log/cfn-init.log
+                log_group_name = ${Logs}
+                [/var/log/cfn-wire.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-wire.log
+                log_stream_name = {instance_id}/var/log/cfn-wire.log
+                log_group_name = ${Logs}
                 [/var/log/cloud-init-output.log]
                 file = /var/log/cloud-init-output.log
                 log_stream_name = {instance_id}/var/log/cloud-init-output.log
+                log_group_name = ${Logs}
+                [/var/log/cloud-init.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cloud-init.log
+                log_stream_name = {instance_id}/var/log/cloud-init.log
+                log_group_name = ${Logs}
+                [/var/log/cron]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cron
+                log_stream_name = {instance_id}/var/log/cron
                 log_group_name = ${Logs}
                 [/var/log/dmesg]
                 file = /var/log/dmesg
                 log_stream_name = {instance_id}/var/log/dmesg
                 log_group_name = ${Logs}
-                [/var/log/oauth2_proxy.log]
-                file = /var/log/oauth2_proxy.log
-                log_stream_name = {instance_id}/var/log/oauth2_proxy.log
+                [/var/log/grubby_prune_debug]
+                file = /var/log/grubby_prune_debug
+                log_stream_name = {instance_id}/var/log/grubby_prune_debug
                 log_group_name = ${Logs}
-                [/var/log/oauth2_proxy.err]
-                datetime_format = %Y/%m/%d %H:%M:%S
-                file = /var/log/oauth2_proxy.err
-                log_stream_name = {instance_id}/var/log/oauth2_proxy.err
+                [/var/log/maillog]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/maillog
+                log_stream_name = {instance_id}/var/log/maillog
+                log_group_name = ${Logs}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}/var/log/messages
+                log_group_name = ${Logs}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}/var/log/secure
+                log_group_name = ${Logs}
+                [/var/log/yum.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/yum.log
+                log_stream_name = {instance_id}/var/log/yum.log
                 log_group_name = ${Logs}
               mode: '000644'
               owner: root
               group: root
           services:
             sysvinit:
-              awslogs:
+              awslogsd:
                 enabled: true
                 ensureRunning: true
                 packages:
@@ -551,9 +660,11 @@ Resources:
               group: root
           commands:
             'a_configure_sshd_command':
-              command: 'sed -i "s:#AuthorizedKeysCommand none:AuthorizedKeysCommand /opt/authorized_keys_command.sh:g" /etc/ssh/sshd_config'
+              command: 'sed -e ''/AuthorizedKeysCommand / s/^#*/#/'' -i /etc/ssh/sshd_config; echo -e ''\nAuthorizedKeysCommand /opt/authorized_keys_command.sh'' >> /etc/ssh/sshd_config'
+              test: '! grep -q ''^AuthorizedKeysCommand /opt/authorized_keys_command.sh'' /etc/ssh/sshd_config'
             'b_configure_sshd_commanduser':
-              command: 'sed -i "s:#AuthorizedKeysCommandUser nobody:AuthorizedKeysCommandUser nobody:g" /etc/ssh/sshd_config'
+              command: 'sed -e ''/AuthorizedKeysCommandUser / s/^#*/#/'' -i /etc/ssh/sshd_config; echo -e ''\nAuthorizedKeysCommandUser nobody'' >> /etc/ssh/sshd_config'
+              test: '! grep -q ''^AuthorizedKeysCommandUser nobody'' /etc/ssh/sshd_config'
             'c_import_users':
               command: './import_users.sh'
               cwd: '/opt'
@@ -567,137 +678,58 @@ Resources:
                 - 'b_configure_sshd_commanduser'
         config:
           users:
-            oauth2_proxy: {}
+            oauth2-proxy: {}
           sources:
-            /opt/oauth2_proxy: 'https://github.com/bitly/oauth2_proxy/releases/download/v2.2/oauth2_proxy-2.2.0.linux-amd64.go1.8.1.tar.gz'
-          packages:
-            yum:
-              nginx: []
+            '/opt/oauth2-proxy': 'https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v7.1.2/oauth2-proxy-v7.1.2.linux-amd64.tar.gz'
           files:
-            '/etc/nginx/conf.d/http2https.conf':
-              content: !Sub |
-                server {
-                  listen 8080 default_server;
-                  server_name _;
-                  return 301 https://$host$request_uri;
-                }
+            '/etc/oauth2-proxy.cfg':
+              content: !Sub
+              - |
+                  ## OAuth2 Proxy Config File
+                  ## https://github.com/oauth2-proxy/oauth2-proxy
+                  http_address = "0.0.0.0:4180"
+                  upstreams = [
+                    "${Upstream}"
+                  ]
+                  ${SkipAuthRegexBlock}
+                  request_logging = false
+                  pass_basic_auth = false
+                  email_domains = [
+                    "*"
+                  ]
+                  client_id = "${GitHubClientId}"
+                  client_secret = "${GitHubClientSecret}"
+                  cookie_secret = "${CookieSecret}"
+                  provider = "github"
+                  github_org = "${GitHubOrganization}"
+              - {SkipAuthRegexBlock: !If [HasSkipAuthRegex, !Join ['', ['skip_auth_regex = ["', !Ref SkipAuthRegex, '"]']], '']}
               mode: '000644'
               owner: root
               group: root
-            '/etc/oauth2_proxy.cfg':
-              content: !Sub |
-                ## OAuth2 Proxy Config File
-                ## https://github.com/bitly/oauth2_proxy
-                http_address = "0.0.0.0:4180"
-                upstreams = [
-                  "${Upstream}"
-                ]
-                request_logging = false
-                pass_basic_auth = false
-                email_domains = [
-                  "*"
-                ]
-                client_id = "${GitHubClientId}"
-                client_secret = "${GitHubClientSecret}"
-                cookie_secret = "${CookieSecret}"
-                provider = "github"
-                github-team = "${GitHubOrganization}"
+            '/etc/systemd/system/oauth2-proxy.service':
+              content: |
+                # Systemd service file for oauth2-proxy daemon
+                #
+                # Date: Feb 9, 2016
+                # Author: Srdjan Grubor <sgnn7@sgnn7.org>
+
+                [Unit]
+                Description=oauth2-proxy daemon service
+                After=syslog.target network.target
+
+                [Service]
+                User=oauth2-proxy
+                Group=oauth2-proxy
+
+                ExecStart=/opt/oauth2-proxy/oauth2-proxy-v7.1.2.linux-amd64/oauth2-proxy --config=/etc/oauth2-proxy.cfg
+                ExecReload=/bin/kill -HUP $MAINPID
+
+                KillMode=process
+                Restart=always
+
+                [Install]
+                WantedBy=multi-user.target
               mode: '000644'
-              owner: root
-              group: root
-            '/etc/init.d/oauth2_proxy':
-              content: !Sub |
-                #!/bin/sh
-                ### BEGIN INIT INFO
-                # Provides:
-                # Required-Start:    $remote_fs $syslog
-                # Required-Stop:     $remote_fs $syslog
-                # Default-Start:     2 3 4 5
-                # Default-Stop:      0 1 6
-                # Short-Description: Start daemon at boot time
-                # Description:       Enable service provided by daemon.
-                ### END INIT INFO
-                dir="/opt/oauth2_proxy/oauth2_proxy-2.2.0.linux-amd64.go1.8.1"
-                cmd="./oauth2_proxy -config=/etc/oauth2_proxy.cfg"
-                user="oauth2_proxy"
-                name=`basename $0`
-                pid_file="/var/run/$name.pid"
-                stdout_log="/var/log/$name.log"
-                stderr_log="/var/log/$name.err"
-                get_pid() {
-                    cat "$pid_file"
-                }
-                is_running() {
-                    [ -f "$pid_file" ] && ps `get_pid` > /dev/null 2>&1
-                }
-                case "$1" in
-                    start)
-                    if is_running; then
-                        echo "Already started"
-                    else
-                        echo "Starting $name"
-                        cd "$dir"
-                        if [ -z "$user" ]; then
-                            sudo $cmd >> "$stdout_log" 2>> "$stderr_log" &
-                        else
-                            sudo -u "$user" $cmd >> "$stdout_log" 2>> "$stderr_log" &
-                        fi
-                        echo $! > "$pid_file"
-                        if ! is_running; then
-                            echo "Unable to start, see $stdout_log and $stderr_log"
-                            exit 1
-                        fi
-                    fi
-                    ;;
-                    stop)
-                    if is_running; then
-                        echo -n "Stopping $name.."
-                        kill `get_pid`
-                        for i in {1..10}
-                        do
-                            if ! is_running; then
-                                break
-                            fi
-                            echo -n "."
-                            sleep 1
-                        done
-                        echo
-                        if is_running; then
-                            echo "Not stopped; may still be shutting down or shutdown may have failed"
-                            exit 1
-                        else
-                            echo "Stopped"
-                            if [ -f "$pid_file" ]; then
-                                rm "$pid_file"
-                            fi
-                        fi
-                    else
-                        echo "Not running"
-                    fi
-                    ;;
-                    restart)
-                    $0 stop
-                    if is_running; then
-                        echo "Unable to stop, will not attempt to start"
-                        exit 1
-                    fi
-                    $0 start
-                    ;;
-                    status)
-                    if is_running; then
-                        echo "Running"
-                    else
-                        echo "Stopped"
-                        exit 1
-                    fi
-                    ;;
-                    *)
-                    echo "Usage: $0 {start|stop|restart|status}"
-                    exit 1
-                    ;;
-                esac
-                exit 0
-              mode: '000755'
               owner: root
               group: root
             '/etc/cfn/cfn-hup.conf':
@@ -713,55 +745,61 @@ Resources:
               content: !Sub |
                 [cfn-auto-reloader-hook]
                 triggers=post.update
-                path=Resources.LaunchConfiguration.Metadata.AWS::CloudFormation::Init
-                action=/opt/aws/bin/cfn-init --verbose --stack=${AWS::StackName} --region=${AWS::Region} --resource=LaunchConfiguration
+                path=Resources.LaunchTemplate.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init --verbose --stack=${AWS::StackName} --region=${AWS::Region} --resource=LaunchTemplate
                 runas=root
           services:
             sysvinit:
-              nginx:
-                enabled: true
-                ensureRunning: true
-                packages:
-                  yum:
-                  - nginx
-                files:
-                - '/etc/nginx/conf.d/http2https.conf'
-              oauth2_proxy:
+              oauth2-proxy:
                 enabled: true
                 ensureRunning: true
                 sources:
-                - '/opt/oauth2_proxy'
+                - '/opt/oauth2-proxy'
                 files:
-                - '/etc/oauth2_proxy.cfg'
-                - '/etc/init.d/oauth2_proxy'
+                - '/etc/oauth2-proxy.cfg'
+                - '/etc/systemd/system/oauth2-proxy.service'
               cfn-hup:
                 enabled: true
                 ensureRunning: true
                 files:
                 - '/etc/cfn/cfn-hup.conf'
                 - '/etc/cfn/hooks.d/cfn-auto-reloader.conf'
+              amazon-ssm-agent:
+                enabled: !If [HasSystemsManagerAccess, true, false]
+                ensureRunning: !If [HasSystemsManagerAccess, true, false]
     Properties:
-      AssociatePublicIpAddress: true
-      EbsOptimized: false
-      IamInstanceProfile: !Ref InstanceProfile
-      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
-      InstanceType: !Ref InstanceType
-      SecurityGroups:
-      - !Ref SecurityGroup
-      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
-      UserData:
-        'Fn::Base64': !Sub |
-          #!/bin/bash -x
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfiguration --region ${AWS::Region}
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+      LaunchTemplateData:
+        BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            Encrypted: true
+            VolumeType: gp3
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        InstanceType: !Ref InstanceType
+        KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+        MetadataOptions:
+          HttpTokens: required
+        NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          Groups:
+          - !Ref SecurityGroup
+        UserData:
+          'Fn::Base64': !Sub |
+            #!/bin/bash -x
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchTemplate --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
   AutoScalingGroup:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
     Properties:
-      DesiredCapacity: 1
-      LaunchConfigurationName: !Ref LaunchConfiguration
-      MaxSize: 1
-      MinSize: 1
-      HealthCheckGracePeriod: 300
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt 'LaunchTemplate.LatestVersionNumber'
+      MaxSize: '1'
+      MinSize: '1'
+      HealthCheckGracePeriod: 600 # needs to be in sync with CreationPolicy/UpdatePolicy timeout
       HealthCheckType: ELB
       Tags:
       - Key: Name
@@ -769,19 +807,14 @@ Resources:
         PropagateAtLaunch: true
       TargetGroupARNs:
       - !Ref LoadBalancerTargetGroup
-      - !Ref LoadBalancerTargetGroupHttpRedirect
       NotificationConfigurations: !If
       - HasAlertTopic
       - - NotificationTypes:
           - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
           - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
-          TopicARN:
-            'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
-      - !Ref 'AWS::NoValue'
-      VPCZoneIdentifier: !Split
-      - ','
-      - 'Fn::ImportValue':
-          !Sub '${ParentVPCStack}-SubnetsPublic'
+          TopicARN: {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
+      - []
+      VPCZoneIdentifier: !Split [',', {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetsPublic'}]
     CreationPolicy:
       ResourceSignal:
         Count: 1
@@ -809,7 +842,7 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Threshold: 80
       AlarmActions:
-      - 'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'
+      - {'Fn::ImportValue': !Sub '${ParentAlertStack}-TopicARN'}
       Dimensions:
       - Name: AutoScalingGroupName
         Value: !Ref AutoScalingGroup

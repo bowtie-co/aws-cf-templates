@@ -1,16 +1,39 @@
 <iframe src="https://ghbtns.com/github-btn.html?user=widdix&repo=aws-cf-templates&type=star&count=true&size=large" frameborder="0" scrolling="0" width="160px" height="30px"></iframe>
 
-# S3 VirusScan
-This template creates a Antivirus cluster for S3 buckets. You can connect as many buckets as you like by using [S3 Event Notifications](http://docs.aws.amazon.com/AmazonS3/latest/dev/NotificationHowTo.html). The template has it's own repository: [aws-s3-virusscan](https://github.com/widdix/aws-s3-virusscan)
+> **New**: [Become a sponsor](https://github.com/sponsors/widdix) via GitHub Sponsors!
+
+# Antivirus for Amazon S3
+
+This template creates a malware scanner cluster for S3 buckets. Connect as many S3 buckets as you like.
+
+> [bucketAV - Antivirus for Amazon S3](https://bucketav.com/) with additional features is available at [AWS Marketplace](https://aws.amazon.com/marketplace/pp/B07XFR781T).
 
 ## Features
 
 * Uses ClamAV to scan newly added files on S3 buckets
 * Updates ClamAV database every 3 hours automatically
-* Scales EC2 instance workers to distribute workload
+* Scales EC2 instance workers to distribute the workload
 * Publishes a message to SNS in case of a finding
 * Can optionally delete compromised files automatically
 * Logs to CloudWatch Logs
+
+### Additional Commercial Features by bucketAV
+
+* Reporting capabilities
+* Dashboard
+* Scan buckets at regular intervals / initial bucket scan
+* Quarantine infected files
+* Enhanced security features (e.g., IMDSv2)
+* Regular Security updates
+* Multi-Account support
+* AWS Integrations:
+    * CloudWatch Integration (Metrics and Dashboard)
+    * Security Hub Integration
+    * SSM OpsCenter Integration
+* S3 -> SNS fan-out support
+* Support
+
+[bucketAV - Antivirus for Amazon S3](https://bucketav.com/) with additional features is available at [AWS Marketplace](https://aws.amazon.com/marketplace/pp/B07XFR781T).
 
 ## Installation Guide
 Visit the template's repository for installation instructions: [aws-s3-virusscan](https://github.com/widdix/aws-s3-virusscan)
@@ -31,7 +54,7 @@ This template creates an account password policy for your IAM users. You can:
 Or just use the suggested defaults.
 
 ## Installation Guide
-1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=security-account-password-policy&templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/account-password-policy.yaml)
+1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/account-password-policy.yaml&stackName=account-password-policy)
 1. Click **Next** to proceed with the next step of the wizard.
 1. Specify a name and all parameters for the stack.
 1. Click **Next** to proceed with the next step of the wizard.
@@ -46,8 +69,8 @@ This template describes a **highly available** authentication proxy that forward
 ![Architecture](./img/security-auth-proxy-ha-github-orga.png)
 
 ## Installation Guide
-1. This templates depends on one of our [`vpc-*azs.yaml`](../vpc/) templates. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=vpc-2azs&templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/vpc/vpc-2azs.yaml)
-1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=security-auth-proxy-ha-github-orga&templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/auth-proxy-ha-github-orga.yaml)
+1. This template depends on one of our [`vpc-*azs.yaml`](./vpc/) templates. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/vpc/vpc-2azs.yaml&stackName=vpc)
+1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/auth-proxy-ha-github-orga.yaml&stackName=auth-proxy&param_ParentVPCStack=vpc)
 1. Click **Next** to proceed with the next step of the wizard.
 1. Specify a name and all parameters for the stack.
 1. Click **Next** to proceed with the next step of the wizard.
@@ -58,7 +81,7 @@ This template describes a **highly available** authentication proxy that forward
 
 ## Dependencies
 * `vpc/vpc-*azs.yaml` (**required**)
-* `vpc/vpc-ssh-bastion.yaml` (recommended)
+* `vpc/vpc-*-bastion.yaml` (recommended)
 * `operations/alert.yaml` (recommended)
 
 ## Limitations
@@ -68,7 +91,7 @@ This template describes a **highly available** authentication proxy that forward
 This template enables CloudTrail to records AWS API calls across all regions in your AWS account. API calls are archived in S3 and also pushed CloudWatch Logs. If new API calls are available in S3 a SNS topic is notified.
 
 ## Installation Guide
-1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=security-cloudtrail&templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/cloudtrail.yaml)
+1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/cloudtrail.yaml&stackName=cloudtrail)
 1. Click **Next** to proceed with the next step of the wizard.
 1. Specify a name and all parameters for the stack.
 1. Click **Next** to proceed with the next step of the wizard.
@@ -117,7 +140,7 @@ Replace `$ExternalTrailBucket` with the name of your bucket, and add a row for e
 This template enables AWS Config to deliver a AWS resource inventory to S3. Allowing you to keep track of infrastructure changes for compliance and debugging of your cloud infrastructure. 
 
 ## Installation Guide
-1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=security-config&templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/config.yaml)
+1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/config.yaml&stackName=config)
 1. Click **Next** to proceed with the next step of the wizard.
 1. Specify a name and all parameters for the stack.
 1. Click **Next** to proceed with the next step of the wizard.
@@ -141,7 +164,7 @@ If you want to use an external S3 bucket, the bucket needs to have the following
         ]
       },
       "Action": "s3:GetBucketAcl",
-      "Resource": "arn:aws:s3:::$ExternalTrailBucket"
+      "Resource": "arn:aws:s3:::$ExternalConfigBucket"
     },
     {
       "Sid": " AWSConfigBucketDelivery",
@@ -168,3 +191,36 @@ If you want to use an external S3 bucket, the bucket needs to have the following
 ```
 
 Replace `$ExternalTrailBucket` with the name of your bucket, and add a row for every account you want to write from `$AccountId[*]`.
+
+# KMS customer managed CMK for AWS services
+This template provides a KMS customer managed CMK used by AWS services. Access control via IAM is also enabled. In case of a CMK deletion, a event is forwarded to the `ParentAlertStack` (if specified).
+
+> ATTENTION: If you delete a stack based on this template, the KMS CMK is NOT deleted to prevent data loss! Mark the CMK for deletion if you really want to delete the CMK! All resources encrypted with the CMK (including RDS snapshots) are unusable after the deletion!
+
+## Installation Guide
+1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/kms-key.yaml&stackName=kms-key)
+1. Click **Next** to proceed with the next step of the wizard.
+1. Specify a name and all parameters for the stack.
+1. Click **Next** to proceed with the next step of the wizard.
+1. Click **Next** to skip the **Options** step of the wizard.
+1. Click **Create** to start the creation of the stack.
+1. Wait until the stack reaches the state **CREATE_COMPLETE**
+
+If you have an existing KMS customer managed CMK you can wrap it into our required form using a legacy KMS customer managed CMK wrapper: [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/kms-key-legacy.yaml&stackName=kms-key)
+
+## Dependencies
+* `operations/alert.yaml` (recommended)
+
+# Web Application Firewall
+This templates provides a WebACL with preconfigured rules.
+
+## Installation Guide
+1. [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/waf.yaml&stackName=waf)
+1. Click **Next** to proceed with the next step of the wizard.
+1. Specify a name and all parameters for the stack.
+1. Click **Next** to proceed with the next step of the wizard.
+1. Click **Next** to skip the **Options** step of the wizard.
+1. Click **Create** to start the creation of the stack.
+1. Wait until the stack reaches the state **CREATE_COMPLETE**
+
+If you have an existing WEB ACL, or if you need a WAF for CloudFront in a different region, you can wrap it into our required form using a legacy WAF wrapper: [![Launch Stack](./img/launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://s3-eu-west-1.amazonaws.com/widdix-aws-cf-templates-releases-eu-west-1/__VERSION__/security/waf-legacy.yaml&stackName=waf)
