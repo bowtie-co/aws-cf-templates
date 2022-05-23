@@ -432,7 +432,7 @@ Resources:
           - HasNotNginxProxy
           - !Ref 'AWS::NoValue'
           - Name: !Ref NginxContainerName
-            Image: cmr1/nginx-proxy
+            Image: public.ecr.aws/bowtie/nginx-proxy
             Essential: true
             Cpu: !Ref NginxProxyCpu
             Memory: !Ref NginxProxyMemory
