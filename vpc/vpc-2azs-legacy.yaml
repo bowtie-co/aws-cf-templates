@@ -22,8 +22,10 @@ Metadata:
       Parameters:
       - AZA
       - AZB
-      - ClassB
+      - CidrBlock
+      - CidrBlockIPv6
       - VPC
+      - InternetGateway
       - SubnetAPublic
       - RouteTableAPublic
       - SubnetBPublic
@@ -39,16 +41,18 @@ Parameters:
   AZB:
     Description: 'AZ of B'
     Type: 'AWS::EC2::AvailabilityZone::Name'
-  ClassB:
-    Description: 'Class B of VPC (10.XXX.0.0/16)'
-    Type: Number
-    Default: 0
-    ConstraintDescription: 'Must be in the range [0-255]'
-    MinValue: 0
-    MaxValue: 255
+  CidrBlock:
+    Description: 'The set of IP addresses for the VPC (e.g., 10.0.0.0/16).'
+    Type: String
+  CidrBlockIPv6:
+    Description: 'The set of IPv6 addresses for the VPC (e.g., 2600:1f18:277f:e700::/56).'
+    Type: String
   VPC:
     Description: 'VPC'
     Type: 'AWS::EC2::VPC::Id'
+  InternetGateway:
+    Description: 'Internet Gateway id.'
+    Type: String
   SubnetAPublic:
     Description: 'Subnet A public.'
     Type: 'AWS::EC2::Subnet::Id'
@@ -73,10 +77,12 @@ Parameters:
   RouteTableBPrivate:
     Description: 'Route table B private.'
     Type: String
+Conditions:
+  HasNot: !Equals ['true', 'false']
 Resources:
-  Dummy:
-    Type: 'AWS::S3::Bucket'
-    Properties: {}
+  NullResource:
+    Type: 'Custom::NullResource'
+    Condition: HasNot
 Outputs:
   TemplateID:
     Description: 'cloudonaut.io template id.'
@@ -87,11 +93,16 @@ Outputs:
   StackName:
     Description: 'Stack name.'
     Value: !Sub '${AWS::StackName}'
-  AZs:
-    Description: 'AZs'
+  AZs: # Better name would be NumberOfAZs, but we keep the name for backward compatibility
+    Description: 'Number of AZs'
     Value: 2
     Export:
       Name: !Sub '${AWS::StackName}-AZs'
+  AZList:  # Better name would be AZs, but the name was already used
+    Description: 'List of AZs'
+    Value: !Join [',', [!Ref AZA, !Ref AZB]]
+    Export:
+      Name: !Sub '${AWS::StackName}-AZList'
   AZA:
     Description: 'AZ of A'
     Value: !Ref AZA
@@ -102,16 +113,26 @@ Outputs:
     Value: !Ref AZB
     Export:
       Name: !Sub '${AWS::StackName}-AZB'
-  ClassB:
-    Description: 'Class B.'
-    Value: !Ref ClassB
+  CidrBlock:
+    Description: 'The set of IP addresses for the VPC.'
+    Value: !Ref CidrBlock
     Export:
-      Name: !Sub '${AWS::StackName}-ClassB'
+      Name: !Sub '${AWS::StackName}-CidrBlock'
+  CidrBlockIPv6:
+    Description: 'The set of IPv6 addresses for the VPC.'
+    Value: !Ref CidrBlockIPv6
+    Export:
+      Name: !Sub '${AWS::StackName}-CidrBlockIPv6'
   VPC:
     Description: 'VPC.'
     Value: !Ref VPC
     Export:
       Name: !Sub '${AWS::StackName}-VPC'
+  InternetGateway:
+    Description: 'InternetGateway.'
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub '${AWS::StackName}-InternetGateway'
   SubnetsPublic:
     Description: 'Subnets public.'
     Value: !Join [',', [!Ref SubnetAPublic, !Ref SubnetBPublic]]
@@ -122,16 +143,6 @@ Outputs:
     Value: !Join [',', [!Ref SubnetAPrivate, !Ref SubnetBPrivate]]
     Export:
       Name: !Sub '${AWS::StackName}-SubnetsPrivate'
-  RouteTablePrivate: # deprecated in v4, will be removed in v5
-    Description: 'Route table private (deprecated in v4, will be removed in v5).'
-    Value: !Ref RouteTableAPrivate
-    Export:
-      Name: !Sub '${AWS::StackName}-RouteTablePrivate'
-  RouteTablePublic: # deprecated in v4, will be removed in v5
-    Description: 'Route table public (deprecated in v4, will be removed in v5).'
-    Value: !Ref RouteTableAPublic
-    Export:
-      Name: !Sub '${AWS::StackName}-RouteTablePublic'
   RouteTablesPrivate:
     Description: 'Route tables private.'
     Value: !Join [',', [!Ref RouteTableAPrivate, !Ref RouteTableBPrivate]]
